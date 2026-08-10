@@ -1,0 +1,17 @@
+# --- Core: BM25 retrieval, chunking, and the eval harness -----------------
+# These alone let you run `ingest --embedder none`, `search`, `chunks`, `eval`.
+numpy>=1.24
+PyYAML>=6.0
+python-dotenv>=1.0
+
+# --- Semantic retrieval ---------------------------------------------------
+# Pulls in PyTorch (large). Needed for `--retriever dense` and `hybrid`.
+# Downloads a ~90MB model on first use, then runs offline and free.
+sentence-transformers>=2.2
+
+# --- Generation -----------------------------------------------------------
+# Only needed for `cli.py ask`. Requires ANTHROPIC_API_KEY.
+anthropic>=0.40
+
+# --- Development ----------------------------------------------------------
+pytest>=7.0

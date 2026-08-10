@@ -1,0 +1,156 @@
+# Retrieval evaluation set.
+#
+# Each entry pairs a question with the handbook section(s) that actually
+# contain the answer. `relevant` uses chunk ids in the form
+# "<filename>#<slugified-section-heading>".
+#
+# An empty `relevant` list marks a question the handbook genuinely cannot
+# answer. Those are not scored for retrieval -- they exist to check the system
+# says "I don't know" instead of inventing a policy.
+#
+# The `tags` are for your benefit when reading the failure report:
+#   exact       -- contains a rare literal token (L4, L6); BM25 should shine
+#   paraphrase  -- asks in words the handbook never uses; needs embeddings
+#   confusable  -- a near-miss section exists that will tempt the retriever
+#   multi       -- a complete answer needs more than one section
+#
+# ADD YOUR OWN. Twenty-five questions is a starting point, not a benchmark.
+# The fastest way to improve a real RAG system is to write down every question
+# it got wrong and add it here.
+
+questions:
+  # --- exact-token questions: keyword search territory --------------------
+  - question: What is the notice period for an L4 employee?
+    relevant: ["01-employment-basics.md#notice-periods-after-probation"]
+    tags: [exact]
+
+  - question: What is the target bonus percentage at L6?
+    relevant: ["03-compensation.md#annual-bonus"]
+    tags: [exact]
+
+  - question: How long is the probation period?
+    relevant: ["01-employment-basics.md#employment-status-and-probation"]
+    tags: []
+
+  - question: What are the core hours?
+    relevant:
+      - "05-remote-and-hybrid-work.md#core-hours-and-availability"
+      - "01-employment-basics.md#standard-working-hours"
+    tags: [multi]
+
+  # --- paraphrase questions: embedding territory --------------------------
+  - question: How much can I spend on a desk chair?
+    relevant: ["04-benefits-and-stipends.md#home-office-stipend"]
+    tags: [paraphrase, confusable]
+
+  - question: My grandmother passed away. How many days off can I take?
+    relevant: ["02-time-off.md#bereavement-leave"]
+    tags: [paraphrase]
+
+  - question: I'm having a baby soon. How much time off do I get?
+    relevant: ["02-time-off.md#parental-leave"]
+    tags: [paraphrase, confusable]
+
+  - question: Someone on my team is making me uncomfortable and I don't want to tell my boss.
+    relevant: ["07-conduct-and-reporting.md#reporting-a-concern"]
+    tags: [paraphrase]
+
+  - question: Can I take a couple of months off to travel?
+    relevant: ["02-time-off.md#unpaid-personal-leave"]
+    tags: [paraphrase, confusable]
+
+  # --- confusable: three stipends, six kinds of leave ---------------------
+  - question: Can I expense a gym membership?
+    relevant: ["04-benefits-and-stipends.md#wellness-stipend"]
+    tags: [confusable]
+
+  - question: Can I expense a conference ticket?
+    relevant: ["04-benefits-and-stipends.md#learning-and-development-stipend"]
+    tags: [confusable]
+
+  - question: Is therapy covered?
+    relevant: ["04-benefits-and-stipends.md#wellness-stipend"]
+    tags: [confusable, paraphrase]
+
+  - question: I've used all my sick days but I'm still unwell. What happens now?
+    relevant:
+      - "02-time-off.md#sick-leave"
+      - "02-time-off.md#extended-medical-leave"
+    tags: [multi, confusable]
+
+  # --- compensation -------------------------------------------------------
+  - question: When do I get paid each month?
+    relevant: ["03-compensation.md#pay-dates-and-payslips"]
+    tags: []
+
+  - question: When do salary increases take effect?
+    relevant: ["03-compensation.md#the-compensation-review-cycle"]
+    tags: [confusable]
+
+  - question: How often are promotions decided?
+    relevant: ["03-compensation.md#the-promotion-cycle"]
+    tags: [confusable]
+
+  - question: How does my stock vest?
+    relevant: ["03-compensation.md#equity"]
+    tags: []
+
+  - question: Am I allowed to tell a colleague what I earn?
+    relevant: ["03-compensation.md#salary-bands-and-pay-transparency"]
+    tags: [paraphrase]
+
+  # --- remote work --------------------------------------------------------
+  - question: How many days a week do hybrid employees come into the office?
+    relevant: ["05-remote-and-hybrid-work.md#working-arrangement-types"]
+    tags: []
+
+  - question: Can I work from Spain for three weeks?
+    relevant: ["05-remote-and-hybrid-work.md#working-from-another-country"]
+    tags: [paraphrase, confusable]
+
+  - question: Is there an allowance for a co-working space?
+    relevant: ["05-remote-and-hybrid-work.md#co-working-spaces"]
+    tags: [confusable]
+
+  # --- travel and expenses ------------------------------------------------
+  - question: What is the hotel cap in London?
+    relevant: ["06-travel-and-expenses.md#hotels"]
+    tags: [exact]
+
+  - question: Do I need approval before booking a 3000 dollar trip?
+    relevant: ["06-travel-and-expenses.md#approval-thresholds"]
+    tags: []
+
+  - question: Can I fly business class on a long haul flight?
+    relevant: ["06-travel-and-expenses.md#flights"]
+    tags: []
+
+  - question: How long do I have to submit an expense claim?
+    relevant: ["06-travel-and-expenses.md#general-principles"]
+    tags: [confusable]
+
+  # --- conduct ------------------------------------------------------------
+  - question: Can I do freelance work on the side?
+    relevant: ["07-conduct-and-reporting.md#outside-work-and-moonlighting"]
+    tags: [paraphrase]
+
+  - question: Can I paste customer data into an AI chatbot?
+    relevant: ["07-conduct-and-reporting.md#use-of-ai-tools"]
+    tags: []
+
+  - question: I'm dating someone at work. Do I need to tell anyone?
+    relevant: ["07-conduct-and-reporting.md#relationships-at-work"]
+    tags: [paraphrase]
+
+  # --- unanswerable: the system must refuse, not invent -------------------
+  - question: How many parking spaces are there at the Berlin office?
+    relevant: []
+    tags: [unanswerable]
+
+  - question: Does Northwind offer pet insurance?
+    relevant: []
+    tags: [unanswerable]
+
+  - question: What is the WiFi password in the London office?
+    relevant: []
+    tags: [unanswerable]

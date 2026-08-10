@@ -1,0 +1,83 @@
+{
+  // Press F5 in Cursor, or use the Run and Debug sidebar, to launch any of
+  // these. Set a breakpoint in hr_rag/retrieval.py first -- stepping through
+  // BM25.search() while it scores real chunks is the single best way to
+  // understand what the formula is doing.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "0. Web UI (http://127.0.0.1:8000)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/server.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false
+    },
+    {
+      "name": "1. Ingest (build the index)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/cli.py",
+      "args": ["ingest"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false
+    },
+    {
+      "name": "2. Eval (compare retrievers)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/cli.py",
+      "args": ["eval"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false
+    },
+    {
+      "name": "3. Search (asks for a question)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/cli.py",
+      "args": ["search", "${input:question}", "--retriever", "${input:retriever}"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false
+    },
+    {
+      "name": "4. Ask (needs ANTHROPIC_API_KEY)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/cli.py",
+      "args": ["ask", "${input:question}"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false
+    },
+    {
+      "name": "5. Chunks (inspect splitting)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/cli.py",
+      "args": ["chunks"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false
+    }
+  ],
+  "inputs": [
+    {
+      "id": "question",
+      "type": "promptString",
+      "description": "Question to put to the handbook",
+      "default": "How much can I spend on a desk chair?"
+    },
+    {
+      "id": "retriever",
+      "type": "pickString",
+      "description": "Which retrieval strategy?",
+      "options": ["hybrid", "bm25", "dense"],
+      "default": "hybrid"
+    }
+  ]
+}

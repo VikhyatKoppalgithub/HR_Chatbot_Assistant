@@ -1,0 +1,26 @@
+# Secrets -- never commit your API key
+.env
+
+# The built index is a derived artifact: rebuild it with `python cli.py ingest`.
+# vectors.npy is also large and binary, which makes for miserable git diffs.
+data/index/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# Model caches
+.cache/
+
+# Editor: settings.json pins an absolute interpreter path specific to this
+# machine, so it stays local. launch.json IS committed -- the run/debug
+# configurations are portable and useful to anyone who clones this.
+.vscode/settings.json
+
+# OS
+.DS_Store
