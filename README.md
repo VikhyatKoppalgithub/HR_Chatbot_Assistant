@@ -148,6 +148,11 @@ calls the API.
 > The server binds to `127.0.0.1` on purpose — it has no authentication and
 > must not be reachable from your network. It is a dev tool, not a deployment.
 
+**Deploying it publicly?** See [DEPLOY.md](DEPLOY.md). The public build runs
+with `DEMO_MODE=1`, which disables answer generation server-side — a public
+endpoint with a live API key is money anyone can spend. Retrieval, strategy
+switching, and comparison all still work, and they're the interesting half.
+
 ---
 
 ## The CLI

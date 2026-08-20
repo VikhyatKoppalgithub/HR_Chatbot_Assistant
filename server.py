@@ -119,6 +119,8 @@ class Handler(BaseHTTPRequestHandler):
                     "top_k": config.TOP_K,
                     "rerank_candidates": config.RERANK_CANDIDATES,
                     "model": config.ANTHROPIC_MODEL,
+                    # The UI reads this to hide the "Ask Claude" button.
+                    "demo_mode": config.DEMO_MODE,
                 }
             )
         else:
@@ -194,6 +196,19 @@ class Handler(BaseHTTPRequestHandler):
         We write to the socket as chunks arrive rather than buffering the whole
         answer, so text appears in the browser as it is generated.
         """
+        # Enforce demo mode HERE, on the server -- hiding the button in the UI
+        # is cosmetic and anyone can curl this endpoint directly.
+        if config.DEMO_MODE:
+            self._send_json(
+                {
+                    "error": "Generation is disabled in this public demo. "
+                    "Retrieval, strategy switching, and comparison all work. "
+                    "Clone the repo and add your own ANTHROPIC_API_KEY to enable answers."
+                },
+                code=403,
+            )
+            return
+
         body = self._read_json()
         question = (body.get("question") or "").strip()
         if not question:

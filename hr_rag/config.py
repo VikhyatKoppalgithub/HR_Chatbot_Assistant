@@ -83,3 +83,16 @@ MAX_TOKENS = int(os.getenv("MAX_TOKENS", "4000"))
 # excerpts is not a hard reasoning task, so "medium" is plenty and costs less
 # than the default "high". Raise it if you add multi-hop questions.
 EFFORT = os.getenv("EFFORT", "medium")
+
+# --- Public demo mode -----------------------------------------------------
+# Set DEMO_MODE=1 to disable generation (the "Ask Claude" button) while leaving
+# retrieval, strategy switching, and comparison fully working.
+#
+# Why this exists: the web server has no authentication and no rate limiting.
+# A publicly reachable deployment with a live API key means anyone on the
+# internet can spend your Anthropic credits, and a portfolio link WILL get
+# crawled. Retrieval costs nothing and runs entirely locally, so the public
+# demo shows the interesting half at zero risk.
+#
+# Unset (the default) locally, so `cli.py ask` and the UI button work normally.
+DEMO_MODE = os.getenv("DEMO_MODE", "").strip().lower() in ("1", "true", "yes", "on")
