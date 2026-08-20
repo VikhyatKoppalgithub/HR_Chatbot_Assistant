@@ -17,6 +17,11 @@ env/
 # Model caches
 .cache/
 
+# Personal study notes. Sections 1-9 are solid project documentation, but
+# section 10 is interview prep and belongs on your machine, not in a public
+# repo. Delete this line if you decide you want it published.
+WALKTHROUGH.md
+
 # Editor: settings.json pins an absolute interpreter path specific to this
 # machine, so it stays local. launch.json IS committed -- the run/debug
 # configurations are portable and useful to anyone who clones this.

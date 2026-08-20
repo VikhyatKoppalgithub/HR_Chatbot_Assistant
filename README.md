@@ -1,15 +1,50 @@
 # Northwind HR Assistant
 
-A retrieval-augmented generation (RAG) system for an employee handbook, written
-to be **read and measured** rather than just run.
+A retrieval-augmented generation (RAG) system that answers employee questions
+from a company HR handbook **with citations**, built from scratch and — more
+unusually — **measured**.
 
 No LangChain, no LlamaIndex, no vector database. BM25 is implemented from
 scratch in ~60 lines so you can see the actual ranking formula. Every stage is
 a small file you can read in one sitting.
 
-The part most tutorials skip is the part this project leads with: **an
-evaluation harness that scores retrieval quality**, so you can prove a change
-helped instead of hoping it did.
+## The problem
+
+HR teams answer the same policy questions every week, and employees either dig
+through a 40-page PDF or wait for a reply. The obvious fix — ask a language
+model — fails badly: an LLM has never read *your* handbook, so it answers from
+the thousands of other handbooks in its training data. You get a fluent,
+confident, wrong answer about your own parental leave policy.
+
+RAG fixes this by finding the relevant passage first and putting it in the
+prompt, so every answer is grounded in real policy text and cites the section it
+came from. Update the handbook, re-index in seconds — no retraining.
+
+## Features
+
+- **Three retrieval strategies** — BM25 keyword search (written from scratch),
+  dense vector search, and hybrid fusion via Reciprocal Rank Fusion
+- **Cross-encoder reranking** — two-stage retrieval that takes recall to 100%
+- **An evaluation harness** — Hit@K / MRR / Recall@K over 28 hand-labelled
+  questions, so retrieval changes are measured, not guessed
+- **Grounded generation** — Claude answers with `[n]` citations and is instructed
+  to refuse when the handbook doesn't cover the question
+- **A web UI** that shows retrieval, not just answers — switch strategy live and
+  compare all five side by side
+- **49 tests**, most running in 0.12s against stubs rather than real models
+
+## Tech stack
+
+| Layer | Choice | Why |
+|---|---|---|
+| Language | Python 3.13 | — |
+| Embeddings | `sentence-transformers` (`all-MiniLM-L6-v2`, 384-dim) | free, local, no second API key |
+| Reranker | `cross-encoder/ms-marco-MiniLM-L-6-v2` | accuracy where it counts, on a shortlist |
+| Vector store | **numpy array on disk** | 51 chunks — a matmul is exact and instant ([why](#why-no-vector-database)) |
+| Keyword search | BM25, hand-implemented | transparency; one less dependency |
+| Generation | Anthropic Claude (`claude-opus-5`) | grounded answers with citations |
+| Web UI | stdlib `http.server` + vanilla JS | zero extra dependencies, no build step |
+| Tests | pytest | 49 tests |
 
 ---
 
@@ -298,6 +333,36 @@ hr-rag-assistant/
 Run the tests with `pytest`. They use stubs rather than real models, so the
 suite finishes in about a second — except one integration test that exercises
 the real cross-encoder. Skip it with `pytest -m "not slow"`.
+
+---
+
+## Why no vector database
+
+The "vector store" here is a `(51, 384)` numpy array in `vectors.npy`, and the
+entire semantic search is one line:
+
+```python
+scores = self.vectors @ query_vector   # cosine similarity, whole corpus at once
+```
+
+Every vector is L2-normalised at index time, so cosine similarity collapses into
+a plain dot product and the whole corpus is scored in a single matmul. This is
+*exact* nearest-neighbour search — the same thing FAISS calls a flat index.
+
+Benchmarked on an M-series MacBook Air:
+
+| vectors | memory | per query |
+|---|---|---|
+| 51 (this project) | 0.1 MB | ~0.00 ms |
+| 10,000 | 15 MB | 0.59 ms |
+| 100,000 | 154 MB | 9.28 ms |
+| 1,000,000 | 1.5 GB | 103 ms |
+
+A vector database earns its place when you need **approximate** nearest
+neighbour (HNSW/IVF) to go faster than exact search, plus metadata filtering,
+incremental updates, and concurrency. At this scale none of that applies, and a
+DB would have hidden the one line that matters. The switch point is roughly
+100k vectors, or the first time you need filtered search.
 
 ---
 

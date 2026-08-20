@@ -89,6 +89,10 @@ def cmd_search(args: argparse.Namespace) -> int:
     times out of ten the retrieved passages are wrong too, and the bug is in
     retrieval -- not in the prompt, and not in the model.
     """
+    if not args.question.strip():
+        print("! Empty question. Give me something to search for.", file=sys.stderr)
+        return 1
+
     engine, mode = _load_engine_for_query(args.retriever)
     hits = engine.search(args.question, mode=mode, top_k=args.k, rerank=args.rerank)
 
@@ -110,6 +114,10 @@ def cmd_search(args: argparse.Namespace) -> int:
 
 
 def cmd_ask(args: argparse.Namespace) -> int:
+    if not args.question.strip():
+        print("! Empty question. Give me something to ask.", file=sys.stderr)
+        return 1
+
     from hr_rag.answer import stream_answer
 
     engine, mode = _load_engine_for_query(args.retriever)

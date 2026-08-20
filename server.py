@@ -24,6 +24,7 @@ next step and the handler logic below maps over almost unchanged.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import threading
 import webbrowser
@@ -35,7 +36,15 @@ from hr_rag.index import SearchEngine, load_index
 from hr_rag.retrieval import Hit
 
 WEB_DIR = Path(__file__).parent / "web"
-HOST, PORT = "127.0.0.1", 8000
+
+# Local default is 127.0.0.1: this server has NO authentication, so on a dev
+# machine it must not be reachable from the network.
+#
+# Both are overridable because hosting platforms inject $PORT and require
+# binding 0.0.0.0. Only set HOST=0.0.0.0 where the platform itself provides
+# the isolation and TLS termination -- never on your laptop.
+HOST = os.getenv("HOST", "127.0.0.1")
+PORT = int(os.getenv("PORT", "8000"))
 
 # Built once at startup and shared across requests. Loading the embedding model
 # takes a couple of seconds, so doing it per-request would make the UI feel
@@ -125,6 +134,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_ask()
             else:
                 self._send(404, b"not found", "text/plain")
+        except json.JSONDecodeError:
+            # Bad request body is the caller's fault, not ours -> 4xx not 5xx.
+            self._send_json({"error": "malformed JSON in request body"}, code=400)
+        except ValueError as exc:
+            # e.g. an unknown retrieval mode from SearchEngine.search().
+            self._send_json({"error": str(exc)}, code=400)
         except Exception as exc:  # noqa: BLE001 - surface errors to the browser
             self._send_json({"error": f"{type(exc).__name__}: {exc}"}, code=500)
 
@@ -234,7 +249,11 @@ def main() -> int:
     # Bound to 127.0.0.1 deliberately: this server has no authentication, so it
     # must not be reachable from the network. Do not change this to 0.0.0.0.
     server = ThreadingHTTPServer((HOST, PORT), Handler)
-    threading.Timer(0.5, lambda: webbrowser.open(url)).start()
+
+    # Only pop a browser when running locally. On a server there is no browser
+    # to open, and the call would just log a harmless but confusing error.
+    if HOST in ("127.0.0.1", "localhost"):
+        threading.Timer(0.5, lambda: webbrowser.open(url)).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
