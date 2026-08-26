@@ -1,16 +1,36 @@
+# Install CPU-only PyTorch.
+#
+# This line is load-bearing for deployment. On Linux, plain `pip install torch`
+# pulls the CUDA build: an ~800MB wheel that unpacks to ~2.5GB of GPU libraries
+# which are completely unused on a CPU host, and which will blow past the disk
+# and memory limits of every free hosting tier.
+#
+# The PyTorch CPU index publishes versions tagged `+cpu` (e.g. 2.8.0+cpu).
+# Under PEP 440 a local-version tag sorts ABOVE the plain release, so pip
+# prefers the CPU wheel when both indexes are visible. On macOS there is no
+# separate CPU build and this quietly falls back to PyPI, so it is safe locally.
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 # --- Core: BM25 retrieval, chunking, and the eval harness -----------------
 # These alone let you run `ingest --embedder none`, `search`, `chunks`, `eval`.
 numpy>=1.24
 PyYAML>=6.0
 python-dotenv>=1.0
 
-# --- Semantic retrieval ---------------------------------------------------
-# Pulls in PyTorch (large). Needed for `--retriever dense` and `hybrid`.
-# Downloads a ~90MB model on first use, then runs offline and free.
+# --- Semantic retrieval and reranking -------------------------------------
+# Needed for `--retriever dense`, `hybrid`, and `--rerank`.
+# Downloads two ~90MB models on first use, then runs offline and free.
+torch
 sentence-transformers>=2.2
 
+# --- Web UI ---------------------------------------------------------------
+# The Streamlit front-end (app.py) is what Streamlit Community Cloud serves.
+# The local stdlib server (server.py) needs nothing beyond the standard library.
+streamlit>=1.30
+
 # --- Generation -----------------------------------------------------------
-# Only needed for `cli.py ask`. Requires ANTHROPIC_API_KEY.
+# Only needed for `cli.py ask` and the local UI's answer button.
+# Requires ANTHROPIC_API_KEY. Disabled in the public demo (DEMO_MODE=1).
 anthropic>=0.40
 
 # --- Development ----------------------------------------------------------

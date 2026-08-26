@@ -1,58 +1,105 @@
 # Deploying the public demo
 
-The deployed build is **retrieval-only**. Answer generation is disabled because
-the server has no authentication or rate limiting, and a public link with a live
-API key means anyone on the internet can spend your Anthropic credits. Retrieval
-runs entirely locally on the host and costs nothing.
-
-`DEMO_MODE=1` is enforced **server-side** in `server.py` — hiding the button in
-the UI is cosmetic, so `/api/ask` returns `403` regardless of what the browser
-sends.
+The public build is **retrieval-only**. Answer generation is disabled because
+the demo has no authentication or rate limiting, and a public URL with a live
+API key is money anyone on the internet can spend. Retrieval runs entirely on
+the host CPU, costs nothing, and is the half of the project worth showing.
 
 ---
 
-## Why Hugging Face Spaces
+## Streamlit Community Cloud (recommended)
 
-The app needs PyTorch plus two transformer models — roughly 1–1.5 GB of RAM.
+Free, deploys **straight from this GitHub repo** — no Docker, no second git
+remote — and redeploys automatically on every push.
 
-| Platform | Free tier | Verdict |
-|---|---|---|
-| **HF Spaces** | 16 GB RAM, 2 vCPU | ✅ built for ML demos |
-| Render | 512 MB | ❌ OOMs on torch |
-| Vercel / Netlify | serverless bundle caps | ❌ torch is far too large |
-| Fly.io / Railway | needs a card | ⚠️ works, but not free |
+### 1. Deploy
+
+Go to **[share.streamlit.io](https://share.streamlit.io)** → **Create app** →
+**Deploy a public app from GitHub**, then:
+
+| Field | Value |
+|---|---|
+| Repository | `VikhyatKoppalgithub/HR_Chatbot_Assistant` |
+| Branch | `main` |
+| Main file path | `app.py` |
+| App URL | `hr-rag-assistant` (or whatever is free) |
+
+Click **Deploy**. The first build takes **5–10 minutes**: it installs PyTorch,
+downloads two ~90MB models, and builds the index. Watch the build log.
+
+No secrets to configure. The demo never calls the Anthropic API.
+
+### 2. Verify the deployed URL — not localhost
+
+Your app will be at `https://<your-app-name>.streamlit.app`. Check:
+
+- [ ] Page loads; sidebar shows **51 passages** and *Dense search: on*
+- [ ] The blue "Public demo — retrieval only" notice is visible
+- [ ] Clicking an example chip returns ranked passages with scores
+- [ ] Switching strategy in the sidebar changes the ranking
+- [ ] The **Cross-encoder rerank** toggle changes results
+- [ ] **Compare all strategies** tab renders five columns
+- [ ] Ask *"Can I expense a gym membership?"* and compare: `bm25` should put
+      **Non-Reimbursable Expenses** first (wrong), `dense` should put
+      **Wellness Stipend** first (right). That contrast is the demo.
+
+### 3. Add the link to your portfolio
+
+In `vikhyat-portfolio/content/projects.ts`, find `slug: "hr-rag-assistant"` and
+add one line:
+
+```ts
+links: {
+  github: "https://github.com/VikhyatKoppalgithub/HR_Chatbot_Assistant",
+  demo: "https://<your-app-name>.streamlit.app",
+},
+```
+
+`ProjectCard.tsx` already renders a **Live demo** button with
+`target="_blank" rel="noopener noreferrer"` whenever `demo` is set — no
+component changes needed. Commit and push; Vercel redeploys automatically.
 
 ---
 
-## Steps
+## The one line that decides whether the build succeeds
 
-### 1. Create the Space
+At the top of `requirements.txt`:
 
-Go to **[huggingface.co/new-space](https://huggingface.co/new-space)**:
+```
+--extra-index-url https://download.pytorch.org/whl/cpu
+```
 
-- **Space name:** `hr-rag-assistant`
-- **License:** MIT
-- **SDK:** **Docker** → *Blank*
-- **Hardware:** CPU basic (free)
-- **Visibility:** Public
+On Linux, plain `pip install torch` pulls the **CUDA** build — an ~800MB wheel
+that unpacks to ~2.5GB of GPU libraries that are entirely unused on a CPU host,
+and which exceeds every free tier's limits. The CPU index publishes versions
+tagged `+cpu`, which sort above the plain release under PEP 440, so pip prefers
+them. On macOS there is no separate CPU build, so this is a no-op locally.
 
-### 2. Clone it locally
+**If the Streamlit build fails on disk or memory, this line is the first thing
+to check.**
+
+---
+
+## Alternative: Hugging Face Spaces (Docker)
+
+Use this if Streamlit's ~1GB memory ceiling turns out to be too tight. Spaces
+gives 16GB free and runs the richer stdlib UI (`server.py`) unchanged via the
+included `Dockerfile`.
+
+1. Create a Space at [huggingface.co/new-space](https://huggingface.co/new-space)
+   — **SDK: Docker**, blank template, CPU basic, public.
+2. Clone it and copy the project in:
 
 ```bash
 git clone https://huggingface.co/spaces/YOUR-HF-USERNAME/hr-rag-assistant ~/Desktop/hf-space
 ```
 
-### 3. Copy the project in
-
 ```bash
 rsync -a --exclude '.git' --exclude 'data/index' --exclude '.env' --exclude '__pycache__' --exclude '.pytest_cache' --exclude '.vscode' --exclude 'WALKTHROUGH.md' ~/Desktop/Projects/hr-rag-assistant/ ~/Desktop/hf-space/
 ```
 
-### 4. Add the Space header to its README
-
-Spaces need YAML frontmatter to know how to build. Prepend **exactly this** to
-the top of `~/Desktop/hf-space/README.md`, above the `# Northwind HR Assistant`
-line:
+3. Prepend this frontmatter to the **Space's** `README.md` only (not the GitHub
+   one — GitHub renders it as an ugly table):
 
 ```
 ---
@@ -66,43 +113,19 @@ pinned: false
 ---
 ```
 
-This block only exists in the Space's copy. Don't add it to the GitHub README —
-GitHub renders it as an ugly table.
+4. `git add . && git commit -m "Deploy" && git push`
 
-### 5. Push
+The Dockerfile sets `DEMO_MODE=1`, `HOST=0.0.0.0`, `PORT=7860`, installs
+CPU-only torch, and bakes both models plus the index into the image so cold
+starts are fast.
 
-```bash
-cd ~/Desktop/hf-space && git add . && git commit -m "Deploy retrieval-only demo" && git push
-```
-
-The first build takes **5–10 minutes** — it installs PyTorch, downloads both
-models, and builds the index. Watch the **Logs** tab. Later pushes are faster
-thanks to layer caching.
-
-### 6. Verify the deployed app, not localhost
-
-Your URL will be:
-
-```
-https://YOUR-HF-USERNAME-hr-rag-assistant.hf.space
-```
-
-Check all of these against that URL, not `127.0.0.1`:
-
-- [ ] Page loads and the status line shows `51 passages · 7 docs · dense on`
-- [ ] **No "Ask Claude" button** and the demo notice is visible
-- [ ] Clicking an example chip returns passages with scores
-- [ ] Switching bm25 / dense / hybrid changes the ranking
-- [ ] The rerank toggle changes results
-- [ ] **Compare all strategies** renders five columns
-- [ ] Generation really is blocked, not just hidden:
+Verify generation is genuinely blocked, not just hidden:
 
 ```bash
 curl -s -X POST https://YOUR-HF-USERNAME-hr-rag-assistant.hf.space/api/ask -d '{"question":"pto"}'
 ```
 
-That must return the `403` demo-mode message. If it returns an answer, `DEMO_MODE`
-did not take effect — check the Dockerfile `ENV` block.
+That must return the **403** demo-mode message.
 
 ---
 
@@ -110,22 +133,23 @@ did not take effect — check the Dockerfile `ENV` block.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Build fails on `pip install torch` | wrong index URL | keep `--index-url https://download.pytorch.org/whl/cpu` |
-| Build succeeds, app never starts | port mismatch | `app_port: 7860` in frontmatter must match `PORT` in the Dockerfile |
-| `Permission denied` writing cache | running as root | keep the `USER user` line and `HF_HOME` |
-| App starts but returns 500 | index missing | confirm `python cli.py ingest` ran in the build log |
-| Cold start is slow | models downloading at runtime | confirm the pre-download `RUN` step is in the build log |
+| Build fails, out of space/memory | CUDA torch | keep the `--extra-index-url` line first in `requirements.txt` |
+| App boots then errors on first query | index missing | `get_engine()` in `app.py` builds it on boot — check the log for that step |
+| Very slow first load | models downloading | normal on Streamlit (~1–2 min); the Docker path bakes them in instead |
+| Streamlit app sleeps | free tier idles after inactivity | it wakes on the next visit; takes ~30s |
+| HF: `Permission denied` on cache | running as root | keep `USER user` and `HF_HOME` in the Dockerfile |
+| HF: builds but never serves | port mismatch | `app_port: 7860` must match `PORT` in the Dockerfile |
 
 ---
 
-## Running the full version with generation
+## Running the full version, with generation
 
-Locally, `DEMO_MODE` is unset, so everything works:
+Locally, `DEMO_MODE` is unset so everything works:
 
 ```bash
 python server.py
 ```
 
-To deploy a private instance *with* generation, set `DEMO_MODE=0` and add
-`ANTHROPIC_API_KEY` as a Space secret (**Settings → Variables and secrets**).
-Only do this on a **private** Space, or add authentication first.
+To deploy privately *with* generation, set `DEMO_MODE=0` and add
+`ANTHROPIC_API_KEY` as a platform secret — but only on a **private**
+deployment, or behind authentication.
