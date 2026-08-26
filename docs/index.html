@@ -98,6 +98,10 @@
   @keyframes r{to{transform:rotate(360deg)}}
   .prog{height:4px;background:var(--panel-2);border-radius:2px;overflow:hidden;margin-top:8px}
   .prog i{display:block;height:100%;background:var(--accent);width:0;transition:width .2s}
+  /* Shown when the CDN gives no content-length, so a real percentage is
+     unavailable -- a moving bar is honest about "working", a stuck 0% is not. */
+  .prog i.indeterminate{width:35%!important;animation:slide 1.1s ease-in-out infinite}
+  @keyframes slide{0%{margin-left:-35%}100%{margin-left:100%}}
   [hidden]{display:none!important}
   table{border-collapse:collapse;width:100%;font-size:.8rem;margin-top:8px}
   th,td{text-align:left;padding:5px 9px;border-bottom:1px solid var(--line)}
@@ -188,8 +192,10 @@
 
   <p class="note">
     The handbook is fictional sample data for an invented company. Scores here are
-    computed in your browser with a quantised build of the same model, so they can
-    differ in the last decimal from the Python evaluation above.
+    computed in your browser with an 8-bit quantised build of the same model, so
+    individual scores drift slightly from the Python evaluation above (measured:
+    up to ~0.02, with the tail of a ranking occasionally reordering). Top results
+    match.
   </p>
 </div>
 
@@ -219,9 +225,26 @@ const EXAMPLES = [
 async function loadEmbedder() {
   const { pipeline } = await import(CDN);
   extractor = await pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2", {
+    // Stated explicitly rather than left to the default. transformers.js picks
+    // q8 on WASM anyway, but silently -- and the chunk vectors were computed in
+    // fp32 by PyTorch, so this is a real (if small) mismatch worth owning.
+    //
+    // Measured against the Python implementation on the demo queries: top
+    // results are identical, individual cosine scores drift by up to ~0.02, and
+    // the tail of a ranking can reorder. q8 is a quarter of the download, which
+    // matters far more on first visit than the fifth-place ordering does.
+    dtype: "q8",
     progress_callback: p => {
-      if (p.status === "progress" && p.total)
-        $("#model-prog").style.width = (100 * p.loaded / p.total).toFixed(0) + "%";
+      // The HF CDN doesn't always send content-length, so p.total can be
+      // undefined. Prefer the library's own percentage, fall back to bytes,
+      // and otherwise show an indeterminate bar rather than a stuck 0%.
+      const bar = $("#model-prog");
+      if (p.status === "progress") {
+        const pct = Number.isFinite(p.progress) ? p.progress
+                  : (p.total ? 100 * p.loaded / p.total : null);
+        if (pct === null) bar.classList.add("indeterminate");
+        else { bar.classList.remove("indeterminate"); bar.style.width = pct.toFixed(0) + "%"; }
+      }
     },
   });
 }
@@ -271,6 +294,12 @@ function setStatus(msg, spinning) {
   $("#status").innerHTML = (spinning ? '<span class="spin"></span> ' : "") + msg;
 }
 const esc = s => { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; };
+
+/* The handbook is markdown, so passages carry **bold** markers. Rendering them
+   as literal asterisks looks unfinished. Escape FIRST, then re-introduce only
+   <strong> -- doing it the other way round would neutralise the tag we just
+   added, and escaping is what keeps arbitrary passage text from injecting. */
+const md = s => esc(s).replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
 const showErr = m => { $("#err").textContent = m; $("#err").hidden = false; };
 
 function renderHits(hits, meta) {
@@ -292,7 +321,7 @@ function renderHits(hits, meta) {
         <span class="score">${h.score.toFixed(4)}</span>
       </div>
       <div class="bar"><i style="width:${8 + 92 * (h.score - lo) / span}%"></i></div>
-      <div class="hit-text">${esc(c.text)}</div>
+      <div class="hit-text">${md(c.text)}</div>
       <div class="hit-id">${esc(c.id)}</div>
     </div>`;
   }).join("");

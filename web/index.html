@@ -267,6 +267,11 @@ function params() {
 }
 function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
 
+// Passages are markdown, so they carry **bold** markers. Escape first, then
+// re-introduce only <strong> -- reversing the order would neutralise the tag,
+// and the escape is what stops passage text injecting markup.
+function md(s) { return esc(s).replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>"); }
+
 function renderHits(hits, meta) {
   $("#cmp").hidden = true;
   $("#res").hidden = false;
@@ -283,7 +288,7 @@ function renderHits(hits, meta) {
         <span class="score">${h.score}</span>
       </div>
       <div class="bar"><i style="width:${8 + 92 * (h.score - lo) / span}%"></i></div>
-      <div class="hit-text">${esc(h.text)}</div>
+      <div class="hit-text">${md(h.text)}</div>
       <div class="hit-id">${esc(h.id)}</div>
     </div>`).join("") || `<p class="note">No matches. For bm25 this means no
       query term appears anywhere in the corpus — a real "I don't know" signal.</p>`;
