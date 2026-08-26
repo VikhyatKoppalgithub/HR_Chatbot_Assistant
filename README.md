@@ -46,6 +46,31 @@ came from. Update the handbook, re-index in seconds — no retraining.
 | Web UI | stdlib `http.server` + vanilla JS | zero extra dependencies, no build step |
 | Tests | pytest | 49 tests |
 
+## Live demo — runs entirely in your browser
+
+There is no server. The retrieval engine was ported to JavaScript and runs
+client-side: BM25, cosine search, and Reciprocal Rank Fusion in `docs/engine.js`,
+with query embedding handled by `transformers.js` running the same MiniLM model
+via WebAssembly. The chunk vectors were computed once in Python and ship as a
+164 KB base64 bundle.
+
+That means the demo can't sleep, can't time out, and costs nothing to run — it's
+a static page on GitHub Pages. Keyword search works the instant the page loads;
+semantic search activates once the model finishes downloading (~90 MB, cached
+afterwards). Answer generation is not part of the demo, because a public
+endpoint with a live API key is money anyone can spend.
+
+**Two implementations of the same algorithm drift silently**, so they're
+diffed rather than trusted:
+
+```bash
+python3 tools/verify_js_port.py
+```
+
+That runs the JavaScript engine in Node and compares IDF weights, BM25
+rankings, cosine rankings, and RRF fusion against the Python — chunk for chunk,
+score for score. It exits non-zero on any mismatch.
+
 ---
 
 ## The result this project exists to show
