@@ -56,7 +56,7 @@ class FakeReranker:
 def test_rerank_is_off_by_default(engine, corpus):
     fake = FakeReranker()
     engine._reranker = fake
-    engine.search("parental leave", mode="dense", top_k=3)
+    engine.search("parental leave", top_k=3)
     assert fake.seen_candidates == 0, "reranker must not run unless asked"
 
 
@@ -64,55 +64,57 @@ def test_rerank_receives_a_wide_candidate_pool(engine):
     """The whole point: stage 1 must over-fetch, or stage 2 has nothing to fix."""
     fake = FakeReranker()
     engine._reranker = fake
-    engine.search("parental leave", mode="dense", top_k=3, rerank=True)
+    engine.search("parental leave", top_k=3, rerank=True)
     assert fake.seen_candidates == config.RERANK_CANDIDATES
     assert fake.seen_candidates > 3
 
 
 def test_rerank_changes_the_order(engine):
     engine._reranker = FakeReranker()
-    plain = engine.search("parental leave", mode="dense", top_k=5)
-    reranked = engine.search("parental leave", mode="dense", top_k=5, rerank=True)
+    plain = engine.search("parental leave", top_k=5)
+    reranked = engine.search("parental leave", top_k=5, rerank=True)
     assert [h.chunk.id for h in plain] != [h.chunk.id for h in reranked]
 
 
 def test_rerank_respects_top_k(engine):
     engine._reranker = FakeReranker()
-    assert len(engine.search("leave", mode="dense", top_k=3, rerank=True)) == 3
+    assert len(engine.search("leave", top_k=3, rerank=True)) == 3
 
 
 def test_rerank_reassigns_ranks(engine):
     engine._reranker = FakeReranker()
-    hits = engine.search("leave", mode="dense", top_k=4, rerank=True)
+    hits = engine.search("leave", top_k=4, rerank=True)
     assert [h.rank for h in hits] == [0, 1, 2, 3]
 
 
 def test_rerank_passes_the_query_through(engine):
     fake = FakeReranker()
     engine._reranker = fake
-    engine.search("bereavement policy", mode="dense", top_k=2, rerank=True)
+    engine.search("bereavement policy", top_k=2, rerank=True)
     assert fake.seen_query == "bereavement policy"
 
 
-def test_rerank_works_on_top_of_bm25(engine):
-    """Reranking is independent of which retriever produced the candidates."""
+def test_rerank_receives_dense_candidates(engine):
+    """Stage one is always dense; the reranker just reorders what it gets."""
     fake = FakeReranker()
     engine._reranker = fake
-    hits = engine.search("hotel cap London", mode="bm25", top_k=3, rerank=True)
+    hits = engine.search("hotel cap London", top_k=3, rerank=True)
     assert hits
     assert fake.seen_candidates > 0
 
 
 def test_reranker_is_lazy(corpus):
     """Constructing an engine must not load the cross-encoder."""
-    fresh = SearchEngine(corpus)
+    embedder = HashingEmbedder()
+    vectors = embedder.encode([c.embedding_text() for c in corpus])
+    fresh = SearchEngine(corpus, vectors, embedder)
     assert fresh._reranker is None
 
 
-def test_empty_candidate_list_is_handled(engine):
-    """BM25 can legitimately return nothing; that must not crash the reranker."""
-    engine._reranker = FakeReranker()
-    assert engine.search("zzzzq wibblefrotz", mode="bm25", top_k=5, rerank=True) == []
+def test_reranker_handles_an_empty_candidate_list(corpus):
+    """Defensive: rerank([]) must return [] rather than indexing into nothing."""
+    from hr_rag.rerank import CrossEncoderReranker
+    assert CrossEncoderReranker.rerank(object(), "q", [], 5) == []
 
 
 # --- integration ----------------------------------------------------------
@@ -122,11 +124,13 @@ def test_empty_candidate_list_is_handled(engine):
 def test_real_cross_encoder_runs(corpus):
     """Exercises the actual model. Skips if the dependency is missing."""
     pytest.importorskip("sentence_transformers")
+    from hr_rag.embeddings import get_embedder
     from hr_rag.rerank import CrossEncoderReranker
 
-    engine = SearchEngine(corpus)  # bm25 only -- no embeddings needed
-    engine._reranker = CrossEncoderReranker()
+    embedder = get_embedder("sentence-transformers")
+    vectors = embedder.encode([c.embedding_text() for c in corpus])
+    engine = SearchEngine(corpus, vectors, embedder)
 
-    hits = engine.search("Can I expense a gym membership?", mode="bm25", top_k=3, rerank=True)
+    hits = engine.search("Can I expense a gym membership?", top_k=3, rerank=True)
     assert hits
     assert hits[0].chunk.id == "04-benefits-and-stipends.md#wellness-stipend"

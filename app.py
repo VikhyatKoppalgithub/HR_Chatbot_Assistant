@@ -5,7 +5,7 @@ repo. Locally, `server.py` (stdlib http.server) is the richer UI; this file
 exists because Streamlit Cloud can only serve a Streamlit app.
 
 Both front-ends are thin. Everything real lives in `hr_rag/` and is driven
-through one call -- `engine.search(question, mode=..., top_k=..., rerank=...)`.
+through one call -- `engine.search(question, top_k=..., rerank=...)`.
 That separation is why adding a second interface costs ~200 lines instead of a
 rewrite.
 
@@ -61,15 +61,6 @@ EXAMPLES = [
     "Does Northwind offer pet insurance?",
 ]
 
-# Dense is listed first because it is the measured default -- see
-# config.DEFAULT_RETRIEVER for why hybrid, the conventional choice, lost.
-MODES = {
-    "dense": "Dense — semantic vector search (default)",
-    "hybrid": "Hybrid (BM25 + dense, fused with RRF)",
-    "bm25": "BM25 — keyword search, written from scratch",
-}
-
-
 # --------------------------------------------------------------------------
 # Header
 # --------------------------------------------------------------------------
@@ -83,18 +74,7 @@ engine = get_engine()
 
 with st.sidebar:
     st.subheader("Retrieval settings")
-    from hr_rag import config as _cfg
-
-    mode = st.radio(
-        "Strategy",
-        list(MODES),
-        format_func=lambda m: MODES[m],
-        # Derive the selected index from config rather than hardcoding 0, so
-        # changing DEFAULT_RETRIEVER moves this too.
-        index=list(MODES).index(_cfg.DEFAULT_RETRIEVER)
-        if _cfg.DEFAULT_RETRIEVER in MODES
-        else 0,
-    )
+    st.caption("Retrieval is semantic (dense vector search).")
     rerank = st.toggle(
         "Cross-encoder rerank",
         value=False,
@@ -107,7 +87,7 @@ with st.sidebar:
     st.caption(
         f"**{len(engine.chunks)} passages** from 7 policy documents  \n"
         f"384-dim embeddings · `all-MiniLM-L6-v2`  \n"
-        f"Dense search: {'on' if engine.dense_available else 'off'}"
+        f"Semantic search · cosine similarity"
     )
     st.link_button(
         "View the code on GitHub",
@@ -118,7 +98,7 @@ with st.sidebar:
 st.info(
     "**Public demo — retrieval only.** Answer generation is disabled here: this "
     "deployment has no authentication, and calling the Claude API costs money. "
-    "Everything that makes the project interesting still works — switch strategies, "
+    "Everything that makes the project interesting still works — inspect retrieval, "
     "toggle reranking, and compare all five side by side. Clone the repo and add "
     "your own API key to enable answers.",
     icon="ℹ️",
@@ -147,15 +127,11 @@ def render_hits(hits, caption: str) -> None:
     """Show retrieved passages with rank, score, and a relative score bar."""
     st.caption(caption)
     if not hits:
-        st.warning(
-            "No matches. For BM25 this means no query term appears anywhere in "
-            "the corpus — a genuine “I don't know” signal, which dense retrieval "
-            "can never give you (it always returns its k closest vectors)."
-        )
+        st.warning("No results.")
         return
 
-    # Scores from different strategies live on completely different scales
-    # (BM25 is unbounded, cosine is -1..1, cross-encoder logits are ~-11..11),
+    # Cosine scores and cross-encoder logits live on different scales
+    # (cosine is -1..1, cross-encoder logits are roughly -11..11),
     # so the bar is always relative to THIS result set, never absolute.
     lo = min(h.score for h in hits)
     hi = max(h.score for h in hits)
@@ -176,41 +152,34 @@ def render_hits(hits, caption: str) -> None:
 
 
 tab_retrieve, tab_compare, tab_how = st.tabs(
-    ["Retrieve", "Compare all strategies", "How it works"]
+    ["Retrieve", "Compare reranking", "How it works"]
 )
 
 with tab_retrieve:
     if not question.strip():
         st.info("Type a question above, or click an example.")
     else:
-        hits = engine.search(question, mode=mode, top_k=top_k, rerank=rerank)
+        hits = engine.search(question, top_k=top_k, rerank=rerank)
         render_hits(
             hits,
-            f"`{mode}`{' + cross-encoder rerank' if rerank else ''} · top {top_k}",
+            f"dense{' + cross-encoder rerank' if rerank else ''} · top {top_k}",
         )
 
 with tab_compare:
     st.markdown(
-        "The same question through every strategy. **Bold** means only one "
-        "strategy found that passage — the disagreement is where retrieval "
-        "quality actually lives."
+        "The same question with and without cross-encoder reranking. **Bold** "
+        "means only one configuration found that passage — the disagreement is "
+        "what reranking actually changes."
     )
     if not question.strip():
         st.info("Type a question above, or click an example.")
-    elif st.button("Run all five strategies", type="primary"):
-        strategies = [("bm25", "bm25", False)]
-        if engine.dense_available:
-            strategies += [
-                ("dense", "dense", False),
-                ("hybrid", "hybrid", False),
-                ("dense+rr", "dense", True),
-                ("hybrid+rr", "hybrid", True),
-            ]
+    elif st.button("Run both configurations", type="primary"):
+        configurations = [("dense", False), ("dense+rerank", True)]
 
-        with st.spinner("Running every strategy…"):
+        with st.spinner("Running both configurations…"):
             results = [
-                (label, engine.search(question, mode=m, top_k=top_k, rerank=rr))
-                for label, m, rr in strategies
+                (label, engine.search(question, top_k=top_k, rerank=rerank))
+                for label, rerank in configurations
             ]
 
         counts: dict[str, int] = {}
@@ -236,43 +205,54 @@ with tab_how:
 7 markdown policy documents
    → chunk on `##` headings            51 passages
    → embed with all-MiniLM-L6-v2       (51, 384) float32, L2-normalised
-   → retrieve                          BM25 / dense / hybrid (RRF)
+   → retrieve                          cosine similarity (one matmul)
    → rerank                            cross-encoder, 20 candidates → 5
    → generate                          Claude, cited (disabled in this demo)
 ```
 
 ### Measured results
 
-Five strategies scored on 28 questions with known correct answers, plus 3
-deliberately unanswerable ones:
+Scored on 28 questions with known correct answers (3 further questions are
+deliberately unanswerable and are used for the generation side, not scored
+here):
 
-| strategy | Hit@5 | MRR | Recall@5 |
+| configuration | Hit@5 | MRR | Recall@5 |
 |---|---|---|---|
-| bm25 | 0.821 | 0.720 | 0.821 |
 | dense | 0.929 | 0.911 | 0.929 |
-| hybrid | 0.929 | 0.846 | 0.929 |
 | **dense + rerank** | **1.000** | **0.964** | **1.000** |
-| hybrid + rerank | 0.964 | 0.929 | 0.964 |
 
 ### The finding
 
-**Hybrid search — the conventional default — scored *worse* than plain dense
-retrieval on MRR.** Fusing in BM25's weaker ranking pushed correct passages
-down. Without an evaluation harness, hybrid would have shipped and been
-reported as the better system.
+**Two-stage reranking reached perfect retrieval**, including a question dense
+retrieval alone could not answer: the correct passage was already in its top
+**20**, just not its top **5**. Widening the net and then reordering precisely
+recovered it.
 
-Two-stage reranking then reached perfect recall, including one question no
-single-stage strategy could answer: the correct passage was in dense
-retrieval's top 20 but not its top 5, so widening the net and reordering
-precisely recovered it.
+That is the whole argument for two stages. Stage 1 (dense) is responsible for
+*recall* — getting the right passage somewhere in the candidate pool. Stage 2
+(the cross-encoder) is responsible for *precision* — moving it to the top. It
+maps exactly onto the two metrics: stage 1 protects Hit@K, stage 2 fixes MRR.
+
+### Why a cross-encoder is more accurate
+
+The embedding model is a **bi-encoder**: it reads a passage alone, with no idea
+what will be asked, and compresses it into 384 numbers. Later it reads your
+question alone. Two vectors made in mutual ignorance are then compared — fast,
+because passage vectors are precomputed, but lossy.
+
+A **cross-encoder** compresses nothing. It feeds question and passage through
+the transformer *together*, so attention can relate "conference ticket"
+directly to "conference tickets and travel". Much more accurate, and far too
+slow to run over a whole corpus — hence running it on a 20-item shortlist.
 
 ### Try it yourself
 
-Ask **"Can I expense a gym membership?"** and compare strategies. BM25 ranks
-*Non-Reimbursable Expenses* first — that section is stuffed with the words
-"expense" and "reimbursable", so it looks lexically perfect while being about
-what you **cannot** claim. Keyword search has no concept of meaning.
+Ask **"Can I expense a conference ticket?"** and toggle reranking. The corpus
+contains three structurally similar stipend sections — home office, wellness,
+and learning — so their embeddings sit close together and dense retrieval alone
+can land on the wrong one. The cross-encoder separates them.
 
-No LangChain, no vector database. BM25 is ~60 lines, written from scratch.
+No LangChain, no vector database: the store is a `(51, 384)` numpy array and
+the search is a single matrix multiply.
         """
     )

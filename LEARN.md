@@ -104,72 +104,75 @@ multiply for the entire corpus. Every production vector database does this.
 **A warning in the code.** `HashingEmbedder` exists so tests run without
 downloading PyTorch. It is **not semantic** — it hashes words into buckets, so
 it's a keyword matcher in a vector costume. If your dense results ever look no
-better than BM25, check you aren't accidentally using it.
+suspiciously keyword-like, check you aren't accidentally using it.
 
 → Now read `hr_rag/embeddings.py`.
 
 ---
 
-## 3. Retrieval — two strategies with opposite weaknesses
+## 3. Retrieval — cosine similarity, in one line
 
 **Run it:**
 
 ```bash
-python cli.py search "What is the notice period for an L4 employee?" --retriever bm25
-python cli.py search "I'm having a baby soon. How much time off do I get?" --retriever bm25
-python cli.py search "I'm having a baby soon. How much time off do I get?" --retriever dense
+python cli.py search "What is the notice period for an L4 employee?"
+python cli.py search "I'm having a baby soon. How much time off do I get?"
 ```
 
-The first works with keywords. The second fails completely. The third succeeds.
+The second question shares **no words** with the section that answers it — the
+handbook says "parental leave" and never says "baby". That is the whole reason
+this project retrieves semantically.
 
-### BM25 (keyword)
+### The search itself
 
-Implemented from scratch in `retrieval.py` so you can see the formula. Three
-ideas do all the work:
-
-- **IDF (inverse document frequency).** A word in every chunk ("employee")
-  tells you nothing and gets a low weight. A word in two chunks ("bereavement")
-  is highly discriminating and gets a high weight. This is what stops common
-  words dominating.
-- **Term-frequency saturation (`k1`).** A chunk saying "stipend" ten times is
-  more relevant than one saying it once — but not ten times more. The formula
-  flattens out. Naive word-counting lacks this and is gamed by repetition.
-- **Length normalisation (`b`).** Longer chunks contain more words and would
-  win by accident. Divide by length relative to average.
-
-BM25 is 30 years old, needs no training or GPU, and is still extremely hard to
-beat on queries containing rare exact tokens — IDs, error codes, names, "L4".
-
-### Dense (semantic)
-
-Embed the question, dot-product against every stored vector, take the top k.
-Handles paraphrase and synonym. Struggles to distinguish near-identical
-neighbours — which is why our three stipend sections are so tricky for it.
-
-### Hybrid — Reciprocal Rank Fusion
-
-You can't average the two scores: BM25 is unbounded (0–15ish), cosine is −1 to
-1. Adding them means adding different units, and BM25 would dominate for no good
-reason. Min-max normalising first is unstable — one outlier rescales everything.
-
-RRF's answer: **throw the scores away and keep only the ranks.**
-
-```
-rrf_score(chunk) = sum over retrievers of  1 / (k + rank)
+```python
+scores = self.vectors @ query_vector     # (51,) cosine similarities
+order = np.argsort(-scores, kind="stable")[:top_k]
 ```
 
-A chunk ranked 1st by both beats one ranked 1st by one and 30th by the other.
-`k=60` damps the gap between top ranks. It needs no tuning or training and is
-what most production hybrid search actually uses.
+That is the entire retrieval engine. Embed the question, dot-product it against
+every stored vector, take the highest. Because every vector was normalised to
+length 1 at index time, the dot product *is* cosine similarity (§2), so no
+division is needed and the whole corpus is scored in one matmul.
 
-**One implementation detail that matters:** fetch *more* than `top_k` from each
-retriever before fusing (`pool = max(top_k * 4, 20)` in `index.py`). If you only
-take 5 from each, a chunk ranked 6th by both — a strong consensus candidate —
-can never surface. Fusion needs room to work.
+This is **exact** nearest-neighbour search: every chunk is compared, so the
+result is the true top-k. A vector database adds an *approximate* index on top
+to stay fast at millions of vectors, trading a little recall for a lot of speed.
+The maths above is what they approximate.
+
+### Why ties are broken on index
+
+```python
+np.argsort(-scores, kind="stable")
+```
+
+`kind="stable"` matters. Without it, two chunks with identical scores could
+swap places between runs and make the evaluation look flaky when nothing
+changed. The JavaScript port replicates this deliberately, and there is a test
+for it in both languages.
+
+### What dense retrieval is bad at, stated honestly
+
+**1. Near-duplicates blur.** The corpus deliberately contains three
+structurally similar stipend sections — home office, wellness, and learning.
+Their embeddings sit close together, so *"Can I expense a conference ticket?"*
+can land on the wrong one. That is exactly the question reranking fixes (§5).
+
+**2. It never returns nothing.** Cosine similarity ranks every chunk, so you
+always get your top 5 however irrelevant they are. There is no "no match"
+signal here. The defence against answering an unanswerable question lives
+entirely in the generation prompt (§6), which is explicitly allowed to refuse.
+
+That second point is a real architectural consequence worth being able to
+explain. An earlier version of this project also ran BM25 keyword search, which
+*could* return an empty result — a genuine "no query term appears anywhere".
+BM25 and hybrid fusion were evaluated and then removed because dense scored
+better (0.929 Hit@5 against 0.821 for BM25, and hybrid's rank fusion actually
+*hurt* MRR). Removing them was the right call on the numbers, but it cost that
+one honest signal. A similarity threshold would get it back.
 
 → Now read `hr_rag/retrieval.py`.
 
----
 
 ## 4. Evaluation — the part that makes you an engineer
 
@@ -203,26 +206,23 @@ irrelevant chunks actively distracting the model.
 ### The result on this corpus
 
 ```
-strategy        Hit@5      MRR    Recall@5
-bm25            0.821    0.720       0.821
-dense           0.929    0.911       0.929
-hybrid          0.929    0.846       0.929
-dense+rr        1.000    0.964       1.000
-hybrid+rr       0.964    0.929       0.964
+configuration    Hit@5      MRR    Recall@5
+dense            0.929    0.911       0.929
+dense+rerank     1.000    0.964       1.000
 ```
 
-**Hybrid lost on MRR.** On 51 chunks with a strong embedding model, fusing in
-BM25's weaker ranking dragged correct passages down. Hybrid is usually the right
-default at scale — here it isn't. Without the harness, you'd ship hybrid,
-believe the internet that it's better, and never know.
+**Reranking won outright** (see §5). Perfect Hit@5 and Recall@5, and it
+recovered a question dense retrieval alone could not answer at all.
 
-**Reranking won outright** (`+rr` — see section 5). Perfect Hit@5 and Recall@5,
-and it recovered a question every single-stage strategy missed. Note it did
-*not* help hybrid as much as dense: a polluted candidate pool limits what a
-reranker can do, because it can only reorder what it is given.
+This harness is also what *removed* code from the project. BM25 keyword search
+and hybrid rank fusion were both built and both measured — bm25 at 0.821 Hit@5
+/ 0.720 MRR, hybrid at 0.929 / 0.846. Hybrid is the conventional default and
+it matched dense on recall while ranking worse, because fusing a weaker
+ordering pushes correct passages down. Dense alone beat both, so both were
+deleted. Being able to delete something on evidence is the point of measuring.
 
 **Read the failure list, not just the averages.** The eval prints every question
-each strategy missed. Failures point at causes; averages don't.
+each configuration missed. Failures point at causes; averages don't.
 
 ### Unanswerable questions
 
@@ -270,7 +270,7 @@ chunks is simply impossible.
 So use both, each where it is strong:
 
 ```
-   stage 1   RETRIEVE WIDE AND CHEAP    dense/BM25 -> 20 candidates
+   stage 1   RETRIEVE WIDE AND CHEAP    dense -> 20 candidates
    stage 2   RERANK NARROW AND EXACT    cross-encoder -> best 5
 ```
 
@@ -281,13 +281,13 @@ the two metrics: stage 1 protects Hit@K, stage 2 fixes MRR.
 ### What it did here
 
 ```
-dense       0.929 Hit@5    0.911 MRR
-dense+rr    1.000 Hit@5    0.964 MRR
+dense           0.929 Hit@5    0.911 MRR
+dense+rerank    1.000 Hit@5    0.964 MRR
 ```
 
 The most instructive single result in this project: *"Am I allowed to tell a
-colleague what I earn?"* was missed by **every** single-stage strategy, and
-reranking brings it to rank 2.
+colleague what I earn?"* is missed by dense retrieval entirely, and reranking
+brings it to rank 2.
 
 Stop and think about why that is possible. Reranking cannot conjure passages
 out of nowhere — so the correct passage must already have been in dense
@@ -347,8 +347,8 @@ A repeatable procedure. Do these in order:
 1. **Run `search` on the same question.** Is the correct passage in the results?
    - **Not retrieved →** retrieval problem. Go to 2.
    - **Retrieved, but the answer is still wrong →** generation problem. Go to 5.
-2. **Is it retrieved by *any* strategy?** Try `--retriever bm25` and `dense`
-   separately. If one finds it, your fusion or default mode is the issue.
+2. **Does reranking rescue it?** Try `--rerank`. If it does, the passage was in
+   the top 20 but not the top 5 — a ranking problem, not a recall problem.
 3. **Look at the chunk itself** (`cli.py chunks`). Does it actually contain the
    answer, whole? If the answer straddles two chunks, that's a chunking problem
    — see the worked example in the README.
@@ -396,12 +396,7 @@ left, roughly in order of value per unit of effort:
 | **Chunk** | A passage of a document, the unit that gets retrieved |
 | **Embedding** | A fixed-length vector representing text meaning |
 | **Cosine similarity** | Angle between two vectors; the standard closeness measure |
-| **BM25** | Classic keyword ranking with IDF weighting and length normalisation |
-| **IDF** | Inverse document frequency — rare words count for more |
-| **Dense retrieval** | Search using embeddings |
-| **Sparse retrieval** | Search using keywords (BM25) |
-| **Hybrid search** | Combining both |
-| **RRF** | Reciprocal Rank Fusion — merge rankings using position, not score |
+| **Dense retrieval** | Search using embeddings (what this project uses) |
 | **Top-k** | How many passages to retrieve |
 | **Hit@K / MRR / Recall@K** | Retrieval quality metrics (section 4) |
 | **Bi-encoder** | Encodes query and passage separately, then compares vectors. Fast, precomputable, less precise |

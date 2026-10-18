@@ -6,13 +6,13 @@
 WHY THIS EXISTS
 ---------------
 The Python app needs PyTorch at query time for exactly one reason: to embed the
-user's question. Everything else -- the chunk vectors, the BM25 statistics -- is
-already computed at ingest and never changes.
+user's question. The chunk vectors themselves are computed at ingest and never
+change.
 
 That means the whole retrieval engine can run client-side. The browser embeds
-the query with transformers.js (the same MiniLM model, ONNX build), and BM25 is
-a direct port of `hr_rag/retrieval.py` into JavaScript. No server, so nothing
-can sleep, nothing can time out, and nothing costs money.
+the query with transformers.js (the same MiniLM model, ONNX build), and cosine
+search is a direct port of `hr_rag/retrieval.py` into JavaScript. No server, so
+nothing can sleep, nothing can time out, and nothing costs money.
 
 This script produces the data half of that: chunks plus their precomputed
 vectors, in a form a browser can read.
@@ -66,12 +66,9 @@ def main() -> int:
         "model": meta.get("embedding_model"),
         "dimension": int(vectors.shape[1]),
         "count": int(vectors.shape[0]),
-        # BM25 constants travel with the data so the JS port cannot silently
-        # drift from the Python implementation. Same for the default strategy:
-        # change it once in config.py and the browser demo follows.
-        "bm25": {"k1": config.BM25_K1, "b": config.BM25_B},
-        "rrf_k": config.RRF_K,
-        "default_retriever": config.DEFAULT_RETRIEVER,
+        # The rerank pool size travels with the data so the browser cannot
+        # silently disagree with the Python about how wide stage one fetches.
+        "rerank_candidates": config.RERANK_CANDIDATES,
         "vectors_b64": base64.b64encode(raw).decode("ascii"),
         "chunks": [
             {

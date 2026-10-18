@@ -30,7 +30,7 @@ THE TWO-STAGE ARCHITECTURE
 --------------------------
 So you use both, playing to each one's strength:
 
-    stage 1  RETRIEVE WIDE AND CHEAP   BM25 / dense -> 20 candidates
+    stage 1  RETRIEVE WIDE AND CHEAP   dense -> 20 candidates
     stage 2  RERANK NARROW AND EXACT   cross-encoder -> best 5
 
 Recall is stage 1's job: get the right passage *somewhere* in the 20. Precision
@@ -40,10 +40,11 @@ stage 1 protects Hit@K, stage 2 fixes MRR.
 
 WHY THIS SHOULD HELP HERE SPECIFICALLY
 --------------------------------------
-Our eval showed hybrid finding correct passages (Hit@5 0.929) but ranking them
-below junk (MRR 0.846) -- "Pay Dates and Payslips" appearing in the top 5 for a
-question about a desk chair. That is precisely the failure a reranker fixes:
-the right answer is already in the candidate pool, it just needs reordering.
+Dense retrieval alone scores Hit@5 0.929 / MRR 0.911 on this corpus: it usually
+finds the right passage, but not always at the top, and on two questions it
+misses the top 5 entirely while still having the passage in its top 20. That is
+precisely the failure a reranker fixes -- the right answer is already in the
+candidate pool, it just needs reordering.
 
 Run `python cli.py eval` to see whether the theory holds on this corpus. It
 might not. That is what the harness is for.

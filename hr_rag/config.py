@@ -41,35 +41,21 @@ CHUNK_OVERLAP_CHARS = 150
 # --- Retrieval ------------------------------------------------------------
 TOP_K = 5  # how many chunks to feed the model
 
-# Which strategy runs when the caller doesn't name one.
-#
-# This is "dense" because the evaluation said so, not because it's the
-# conventional choice -- it isn't. Hybrid (BM25 + dense fused with RRF) is the
-# usual default, and on this corpus it measured WORSE:
+# Retrieval is semantic only. Keyword (BM25) and hybrid fusion were evaluated
+# and then removed; dense scored best on this corpus:
 #
 #     strategy   Hit@5    MRR   Recall@5
 #     bm25       0.821   0.720    0.821
-#     dense      0.929   0.911    0.929   <- best single-stage
+#     dense      0.929   0.911    0.929   <- kept
 #     hybrid     0.929   0.846    0.929   <- same recall, worse ranking
 #
-# Fusing BM25's weaker ranking pushed correct passages down. With 51 chunks and
-# a strong embedding model, hybrid's robustness buys nothing and costs MRR.
-#
-# bm25 and hybrid remain fully available via --retriever. Keeping them is the
-# point: they are the evidence that this default was measured rather than
-# assumed. Re-run `python cli.py eval` after changing the corpus -- on a larger
-# or noisier one, hybrid may well win and this should change back.
-DEFAULT_RETRIEVER = os.getenv("DEFAULT_RETRIEVER", "dense")
-
-# BM25 tuning constants. k1 controls how fast term-frequency saturates
-# (a word appearing 10x isn't 10x as relevant); b controls how strongly we
-# penalise long documents. 1.5 / 0.75 are the standard defaults.
-BM25_K1 = 1.5
-BM25_B = 0.75
-
-# Reciprocal Rank Fusion constant. Higher = flatter weighting between ranks.
-# 60 is the value from the original RRF paper and works well in practice.
-RRF_K = 60
+# Worth knowing about the tradeoff that came with that choice: BM25 was the
+# only retriever that could return an EMPTY result, which was a genuine "no
+# query term appears anywhere" signal. Dense always returns its k nearest
+# vectors however irrelevant, so the only defence against answering an
+# unanswerable question is now the generation prompt in answer.py, which is
+# explicitly permitted to refuse. A similarity threshold would restore a
+# retrieval-side signal -- see README "Limitations".
 
 # --- Embeddings -----------------------------------------------------------
 # A small, fast, well-benchmarked sentence embedding model. 384 dimensions,

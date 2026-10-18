@@ -33,15 +33,14 @@ No secrets to configure. The demo never calls the Anthropic API.
 
 Your app will be at `https://<your-app-name>.streamlit.app`. Check:
 
-- [ ] Page loads; sidebar shows **51 passages** and *Dense search: on*
+- [ ] Page loads; sidebar shows **51 passages**
 - [ ] The blue "Public demo — retrieval only" notice is visible
 - [ ] Clicking an example chip returns ranked passages with scores
-- [ ] Switching strategy in the sidebar changes the ranking
 - [ ] The **Cross-encoder rerank** toggle changes results
 - [ ] **Compare all strategies** tab renders five columns
-- [ ] Ask *"Can I expense a gym membership?"* and compare: `bm25` should put
-      **Non-Reimbursable Expenses** first (wrong), `dense` should put
-      **Wellness Stipend** first (right). That contrast is the demo.
+- [ ] Ask *"Can I expense a conference ticket?"* and toggle reranking: dense
+      alone can land on the wrong stipend section; the cross-encoder should
+      lift **Learning and Development Stipend** to #1. That contrast is the demo.
 
 ### 3. Add the link to your portfolio
 

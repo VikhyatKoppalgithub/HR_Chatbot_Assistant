@@ -22,9 +22,9 @@ HIT@K -- did at least one correct passage make the top k?
 
 MRR (Mean Reciprocal Rank) -- 1/(position of the first correct passage).
     Rank 1 scores 1.0, rank 2 scores 0.5, rank 5 scores 0.2. This catches what
-    Hit@K hides: two retrievers can both "find" the passage, but one puts it
-    first and the other puts it fifth, buried under four irrelevant chunks that
-    are actively distracting the model. Higher MRR = less noise in the prompt.
+    Hit@K hides: a retriever can "find" the passage but bury it at rank five
+    under four irrelevant chunks that are actively distracting the model.
+    Higher MRR = less noise in the prompt.
 
 RECALL@K -- what fraction of ALL correct passages were found?
     Matters for questions needing several policies at once. Hit@K is happy with
@@ -32,10 +32,21 @@ RECALL@K -- what fraction of ALL correct passages were found?
 
 WHAT TO DO WITH THEM
 --------------------
-Run `python cli.py eval`. You get one row per retrieval strategy. Then change
-something -- chunk size, top_k, the tokenizer, the embedding model -- and run
-it again. That loop is the actual craft of RAG engineering, and it's why this
-harness exists before any chat UI does.
+Run `python cli.py eval`. You get one row per configuration -- dense alone, and
+dense plus cross-encoder reranking. Then change something -- chunk size, top_k,
+the embedding model, the rerank pool -- and run it again. That loop is the
+actual craft of RAG engineering, and it's why this harness exists before any
+chat UI does.
+
+A NOTE ON THE UNANSWERABLE QUESTIONS
+------------------------------------
+Three questions in the set have no correct passage, because the handbook simply
+doesn't cover them. They are NOT scored here, and deliberately so: dense
+retrieval always returns its k nearest vectors, so there is nothing for a
+retrieval metric to measure. They exist to exercise the *generation* side,
+where the prompt is explicitly allowed to refuse (see answer.py). Measuring
+that properly needs answer-level evaluation, which this project does not yet
+have.
 """
 
 from __future__ import annotations
@@ -73,13 +84,11 @@ class EvalQuestion:
 
 @dataclass
 class Metrics:
-    mode: str
+    label: str
     n: int
     hit_at_k: float
     mrr: float
     recall_at_k: float
-    refusal_rate: float  # over unanswerable questions only
-    n_unanswerable: int
 
 
 def load_questions(path: Path | None = None) -> list[EvalQuestion]:
@@ -110,64 +119,44 @@ def score_one(hits: list[Hit], relevant: list[str]) -> tuple[int, float, float]:
 def evaluate(
     engine: SearchEngine,
     questions: list[EvalQuestion],
-    mode: str,
     top_k: int | None = None,
     rerank: bool = False,
     label: str | None = None,
 ) -> Metrics:
     top_k = top_k or config.TOP_K
-    label = label or (f"{mode}+rr" if rerank else mode)
+    label = label or ("dense+rerank" if rerank else "dense")
 
     answerable = [q for q in questions if not q.unanswerable]
-    unanswerable = [q for q in questions if q.unanswerable]
 
     hits_total = 0
     rr_total = 0.0
     recall_total = 0.0
 
     for question in answerable:
-        results = engine.search(
-            question.question, mode=mode, top_k=top_k, rerank=rerank
-        )
+        results = engine.search(question.question, top_k=top_k, rerank=rerank)
         hit, rr, recall = score_one(results, question.relevant)
         hits_total += hit
         rr_total += rr
         recall_total += recall
 
-    # For questions the handbook genuinely can't answer, the *retriever* will
-    # always return its best guesses -- it has no concept of "nothing fits".
-    # What we can measure cheaply is whether BM25 found any lexical match at
-    # all. A zero-length BM25 result is a real "no match" signal you can use to
-    # skip the model call entirely. Dense retrieval never returns nothing, which
-    # is precisely why the generation prompt must be allowed to refuse.
-    refusals = 0
-    for question in unanswerable:
-        results = engine.search(
-            question.question, mode=mode, top_k=top_k, rerank=rerank
-        )
-        if not results:
-            refusals += 1
-
     n = len(answerable) or 1
     return Metrics(
-        mode=label,
+        label=label,
         n=len(answerable),
         hit_at_k=hits_total / n,
         mrr=rr_total / n,
         recall_at_k=recall_total / n,
-        refusal_rate=(refusals / len(unanswerable)) if unanswerable else 0.0,
-        n_unanswerable=len(unanswerable),
     )
 
 
 def format_table(results: list[Metrics], top_k: int) -> str:
     lines = [
-        f"{'strategy':<12} {'Hit@' + str(top_k):>8} {'MRR':>8} {'Recall@' + str(top_k):>11}",
-        "-" * 42,
+        f"{'configuration':<16} {'Hit@' + str(top_k):>8} {'MRR':>8} {'Recall@' + str(top_k):>11}",
+        "-" * 46,
     ]
     for m in results:
         lines.append(
-            f"{m.mode:<12} {m.hit_at_k:>8.3f} {m.mrr:>8.3f} {m.recall_at_k:>11.3f}"
+            f"{m.label:<16} {m.hit_at_k:>8.3f} {m.mrr:>8.3f} {m.recall_at_k:>11.3f}"
         )
     return "\n".join(lines)
 
@@ -175,22 +164,21 @@ def format_table(results: list[Metrics], top_k: int) -> str:
 def per_question_report(
     engine: SearchEngine,
     questions: list[EvalQuestion],
-    strategies: list[tuple[str, str, bool]],
+    configurations: list[tuple[str, bool]],
     top_k: int,
 ) -> str:
-    """Show which questions each strategy fails. Failures teach more than averages.
+    """Show which questions each configuration fails.
 
-    `strategies` is a list of (label, mode, rerank) triples.
+    Failures teach more than averages. `configurations` is a list of
+    (label, rerank) pairs.
     """
     lines = []
     for question in questions:
         if question.unanswerable:
             continue
         verdicts = []
-        for label, mode, rerank in strategies:
-            results = engine.search(
-                question.question, mode=mode, top_k=top_k, rerank=rerank
-            )
+        for label, rerank in configurations:
+            results = engine.search(question.question, top_k=top_k, rerank=rerank)
             _, rr, _ = score_one(results, question.relevant)
             verdicts.append(f"{label}={'MISS' if rr == 0 else f'#{int(round(1 / rr))}'}")
         if any(v.endswith("MISS") for v in verdicts):
@@ -198,5 +186,5 @@ def per_question_report(
             lines.append(f"  {question.question}{tag}\n    {'  '.join(verdicts)}")
 
     if not lines:
-        return "  (no failures -- every strategy found a correct passage for every question)"
+        return "  (no failures -- every configuration found a correct passage for every question)"
     return "\n".join(lines)

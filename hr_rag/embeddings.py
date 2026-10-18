@@ -12,7 +12,7 @@ land near each other in that space, even when they share no words at all.
 Zero words in common. A keyword search scores this pair at zero. An embedding
 model puts them close together, because it learned during training that these
 sentences appear in similar contexts. That is the entire reason dense retrieval
-exists, and the single thing BM25 cannot do.
+exists, and the single thing keyword matching cannot do.
 
 MEASURING SIMILARITY: WHY WE NORMALISE
 --------------------------------------
@@ -110,8 +110,8 @@ class HashingEmbedder:
     plumbing can run without downloading PyTorch.
 
     Never benchmark with this and conclude something about dense retrieval. If
-    your eval shows dense scoring no better than BM25, check that you aren't
-    accidentally using this class.
+    your eval scores look suspiciously keyword-like -- paraphrased questions
+    failing while literal ones pass -- check you aren't using this class.
     """
 
     def __init__(self, dimension: int = 512):

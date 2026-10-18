@@ -115,11 +115,14 @@ def test_unanswerable_detection():
 # --- end to end -----------------------------------------------------------
 
 
-def test_bm25_evaluation_runs(corpus):
+def test_evaluation_runs(corpus):
+    from hr_rag.embeddings import HashingEmbedder
     from hr_rag.evaluate import evaluate
 
-    engine = SearchEngine(corpus)
-    metrics = evaluate(engine, load_questions(), mode="bm25", top_k=5)
+    embedder = HashingEmbedder()
+    vectors = embedder.encode([c.embedding_text() for c in corpus])
+    engine = SearchEngine(corpus, vectors, embedder)
+    metrics = evaluate(engine, load_questions(), top_k=5)
     assert 0.0 <= metrics.hit_at_k <= 1.0
     assert 0.0 <= metrics.mrr <= 1.0
     assert metrics.n > 0

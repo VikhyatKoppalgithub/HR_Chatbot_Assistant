@@ -4,15 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Northwind HR Assistant — RAG explorer</title>
-<meta name="description" content="A retrieval-augmented generation explorer that runs entirely in your browser. BM25, dense vectors, hybrid fusion and cross-encoder reranking, with no server.">
+<meta name="description" content="A retrieval-augmented generation explorer that runs entirely in your browser: semantic vector search and cross-encoder reranking, with no server.">
 <style>
-  /* Same visual language as the local UI (web/index.html) -- retrieval is the
-     subject, the answer is secondary. Here there is no answer at all: the whole
-     engine runs client-side, so there is no server to call an LLM from. */
+  /* The design goal: make RETRIEVAL the subject, not the chat. Passages get
+     the space and the visual weight. There is no generated answer here at all
+     -- the whole engine runs client-side, so there is no server to call an
+     LLM from. */
   :root {
     --bg:#0f1218; --panel:#161b24; --panel-2:#1c2330; --line:#262f3d;
     --ink:#e8edf5; --ink-dim:#93a1b5; --ink-faint:#64748b;
-    --accent:#f0a868; --accent-dim:#7c5a3a; --bad:#f87171; --good:#6ee7a8;
+    --accent:#f0a868; --accent-dim:#7c5a3a; --bad:#f87171;
     --radius:10px;
     --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
     --sans:system-ui,-apple-system,"Segoe UI",sans-serif;
@@ -49,16 +50,10 @@
   .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
   .chip{background:transparent;border:1px dashed var(--line);color:var(--ink-dim);
         padding:5px 10px;border-radius:999px;font-size:.76rem;cursor:pointer}
-  .chip:hover{border-color:var(--accent);color:var(--accent);border-style:solid}
+  .chip:hover:not(:disabled){border-color:var(--accent);color:var(--accent);border-style:solid}
   .controls{display:flex;gap:20px;flex-wrap:wrap;align-items:center;margin-top:14px;
             padding-top:14px;border-top:1px solid var(--line)}
   .ctl{display:flex;align-items:center;gap:8px;font-size:.8rem;color:var(--ink-dim)}
-  .seg{display:flex;border:1px solid var(--line);border-radius:7px;overflow:hidden}
-  .seg button{border:0;border-radius:0;padding:6px 12px;font-size:.78rem;
-              font-family:var(--mono);background:transparent}
-  .seg button+button{border-left:1px solid var(--line)}
-  .seg button.on{background:var(--accent);color:#1a1206;font-weight:600}
-  .seg button:disabled{opacity:.4}
   input[type=range]{accent-color:var(--accent);width:90px}
   input[type=checkbox]{accent-color:var(--accent);width:15px;height:15px}
 
@@ -78,7 +73,7 @@
   .hit-text{font-size:.88rem;color:var(--ink-dim)}
   .hit-id{font-family:var(--mono);font-size:.7rem;color:var(--ink-faint);margin-top:7px}
 
-  .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}
+  .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px}
   .col{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:12px}
   .col h3{font-family:var(--mono);font-size:.78rem;margin:0 0 9px;color:var(--accent)}
   .col ol{margin:0;padding-left:18px;font-size:.76rem;color:var(--ink-dim)}
@@ -98,8 +93,6 @@
   @keyframes r{to{transform:rotate(360deg)}}
   .prog{height:4px;background:var(--panel-2);border-radius:2px;overflow:hidden;margin-top:8px}
   .prog i{display:block;height:100%;background:var(--accent);width:0;transition:width .2s}
-  /* Shown when the CDN gives no content-length, so a real percentage is
-     unavailable -- a moving bar is honest about "working", a stuck 0% is not. */
   .prog i.indeterminate{width:35%!important;animation:slide 1.1s ease-in-out infinite}
   @keyframes slide{0%{margin-left:-35%}100%{margin-left:100%}}
   [hidden]{display:none!important}
@@ -115,49 +108,41 @@
 
   <header>
     <h1>Northwind <span>HR Assistant</span></h1>
-    <div class="status" id="status"><span class="spin"></span> loading index…</div>
+    <div class="status" id="status"><span class="spin"></span> loading…</div>
   </header>
   <p class="sub">
-    A RAG explorer that runs <b>entirely in your browser</b> — no server, no API calls.
-    Switch retrieval strategy and watch the ranking change.
+    Semantic retrieval running <b>entirely in your browser</b> — no server, no API calls.
     <a href="https://github.com/VikhyatKoppalgithub/HR_Chatbot_Assistant" target="_blank" rel="noopener">Source on GitHub</a>.
   </p>
 
   <div class="askbox">
     <div class="row">
-      <input type="text" id="q" placeholder="Ask about leave, pay, expenses, remote work…" autocomplete="off">
-      <button class="primary" id="btn-search">Retrieve</button>
+      <input type="text" id="q" placeholder="Ask about leave, pay, expenses, remote work…" autocomplete="off" disabled>
+      <button class="primary" id="btn-search" disabled>Retrieve</button>
     </div>
     <div class="chips" id="chips"></div>
     <div class="controls">
-      <div class="ctl">
-        <span>strategy</span>
-        <div class="seg" id="seg">
-          <button data-m="bm25">bm25</button>
-          <button data-m="dense" class="on" disabled>dense</button>
-          <button data-m="hybrid" disabled>hybrid</button>
-        </div>
-      </div>
-      <label class="ctl"><input type="checkbox" id="rr" disabled> rerank</label>
+      <label class="ctl"><input type="checkbox" id="rr" disabled> cross-encoder rerank</label>
       <label class="ctl">top-k <input type="range" id="k" min="1" max="10" value="5">
         <b id="kv" style="font-family:var(--mono);color:var(--accent)">5</b></label>
-      <button id="btn-cmp" style="margin-left:auto">Compare all strategies</button>
+      <button id="btn-cmp" style="margin-left:auto" disabled>Compare with / without rerank</button>
     </div>
   </div>
 
   <div class="banner" id="model-banner">
-    <b>Keyword search is ready now.</b> The semantic model (~90 MB) is downloading in
-    the background — it runs locally in your browser, and is cached after the first visit.
+    <b>Loading the embedding model (~25 MB).</b> Retrieval here is semantic, so the
+    model has to arrive before the first search. It runs locally in your browser
+    and is cached after the first visit.
     <div class="prog"><i id="model-prog"></i></div>
   </div>
 
   <div id="err" class="err" hidden></div>
 
   <div id="cmp" hidden>
-    <div class="sec-title"><h2>Strategy comparison</h2><span class="meta" id="cmp-meta"></span></div>
+    <div class="sec-title"><h2>With and without reranking</h2><span class="meta" id="cmp-meta"></span></div>
     <div class="cols" id="cols"></div>
-    <p class="note">Bold = retrieved by this strategy only. Disagreement between
-      columns is where retrieval quality actually lives.</p>
+    <p class="note">Bold = retrieved by that configuration only. The difference
+      is exactly what the cross-encoder changes.</p>
   </div>
 
   <div id="res" hidden>
@@ -166,27 +151,23 @@
   </div>
 
   <div class="banner" style="margin-top:28px">
-    <b>Measured results</b> — five strategies scored on 28 questions with known
-    correct answers, plus 3 deliberately unanswerable ones:
+    <b>Measured results</b> — scored on 28 questions with known correct answers:
     <table>
-      <tr><th>strategy</th><th style="text-align:right">Hit@5</th><th style="text-align:right">MRR</th><th style="text-align:right">Recall@5</th></tr>
-      <tr><td>bm25</td><td class="num">0.821</td><td class="num">0.720</td><td class="num">0.821</td></tr>
+      <tr><th>configuration</th><th style="text-align:right">Hit@5</th><th style="text-align:right">MRR</th><th style="text-align:right">Recall@5</th></tr>
       <tr><td>dense</td><td class="num">0.929</td><td class="num">0.911</td><td class="num">0.929</td></tr>
-      <tr><td>hybrid</td><td class="num">0.929</td><td class="num">0.846</td><td class="num">0.929</td></tr>
       <tr class="win"><td>dense + rerank</td><td class="num">1.000</td><td class="num">0.964</td><td class="num">1.000</td></tr>
-      <tr><td>hybrid + rerank</td><td class="num">0.964</td><td class="num">0.929</td><td class="num">0.964</td></tr>
     </table>
     <p style="margin:10px 0 0">
-      The finding: <b>hybrid search — the conventional default — scored worse than
-      plain dense retrieval on MRR</b>, because fusing in BM25's weaker ranking pushed
-      correct passages down. Reranking then reached perfect recall. Without an
-      evaluation harness, hybrid would have shipped as "the better system".
+      <b>Two-stage reranking reached perfect retrieval</b>, including a question
+      dense search alone could not answer — the correct passage was already in its
+      top <b>20</b>, just not its top <b>5</b>. Stage one is responsible for
+      recall, stage two for precision.
     </p>
     <p style="margin:10px 0 0">
-      Try <b>“Can I expense a gym membership?”</b> and compare: bm25 ranks
-      <i>Non-Reimbursable Expenses</i> first — that section is full of the words
-      “expense” and “reimbursable”, so it looks lexically perfect while being about
-      what you <i>cannot</i> claim.
+      Try <b>“Can I expense a conference ticket?”</b> and toggle reranking. The
+      corpus deliberately contains three structurally similar stipend sections —
+      home office, wellness and learning — so their embeddings sit close together
+      and dense search alone can land on the wrong one.
     </p>
   </div>
 
@@ -203,18 +184,17 @@
 // The retrieval engine lives in its own module so it can be tested headlessly.
 // `tools/verify_js_port.py` runs it in Node and diffs every ranking against the
 // Python implementation -- see that script before changing anything in there.
-import { buildBM25, decodeVectors, search as engineSearch } from "./engine.js";
+import { decodeVectors, search as engineSearch } from "./engine.js";
 
 const $ = s => document.querySelector(s);
 const CDN = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1";
 
-let BUNDLE = null, VECS = null, DIM = 0, BM = null;
-let extractor = null, rrTok = null, rrModel = null;
-let mode = "bm25", denseReady = false;
+let BUNDLE = null, VECS = null, DIM = 0;
+let extractor = null, rrTok = null, rrModel = null, ready = false;
 
 const EXAMPLES = [
   "How much can I spend on a desk chair?",
-  "Can I expense a gym membership?",
+  "Can I expense a conference ticket?",
   "I'm having a baby soon. How much time off do I get?",
   "Am I allowed to tell a colleague what I earn?",
   "What is the hotel cap in London?",
@@ -228,11 +208,9 @@ async function loadEmbedder() {
     // Stated explicitly rather than left to the default. transformers.js picks
     // q8 on WASM anyway, but silently -- and the chunk vectors were computed in
     // fp32 by PyTorch, so this is a real (if small) mismatch worth owning.
-    //
-    // Measured against the Python implementation on the demo queries: top
-    // results are identical, individual cosine scores drift by up to ~0.02, and
-    // the tail of a ranking can reorder. q8 is a quarter of the download, which
-    // matters far more on first visit than the fifth-place ordering does.
+    // Measured: top results identical, scores drift up to ~0.02, ranking tails
+    // can reorder. q8 is a quarter of the download, which matters far more on
+    // first visit than fifth-place ordering does.
     dtype: "q8",
     progress_callback: p => {
       // The HF CDN doesn't always send content-length, so p.total can be
@@ -276,17 +254,12 @@ async function rerank(query, hits, topK) {
   return scored.slice(0, topK).map((h, rank) => ({ ...h, rank }));
 }
 
-/* ── One entry point, delegating to the verified engine module ──────────── */
 function engineState() {
-  return { bm: BM, vecs: VECS, dim: DIM, count: BUNDLE.count, rrfK: BUNDLE.rrf_k, embed };
+  return { vecs: VECS, dim: DIM, count: BUNDLE.count, embed };
 }
 
-async function search(query, m, topK, doRerank) {
-  return engineSearch(engineState(), query, {
-    mode: m,
-    topK,
-    rerank: doRerank ? rerank : null,
-  });
+async function search(query, topK, doRerank) {
+  return engineSearch(engineState(), query, { topK, rerank: doRerank ? rerank : null });
 }
 
 /* ── UI ─────────────────────────────────────────────────────────────────── */
@@ -295,21 +268,18 @@ function setStatus(msg, spinning) {
 }
 const esc = s => { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; };
 
-/* The handbook is markdown, so passages carry **bold** markers. Rendering them
-   as literal asterisks looks unfinished. Escape FIRST, then re-introduce only
-   <strong> -- doing it the other way round would neutralise the tag we just
-   added, and escaping is what keeps arbitrary passage text from injecting. */
+/* The handbook is markdown, so passages carry **bold** markers. Escape FIRST,
+   then re-introduce only <strong> -- doing it the other way round would
+   neutralise the tag we just added, and escaping is what keeps arbitrary
+   passage text from injecting. */
 const md = s => esc(s).replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+
 const showErr = m => { $("#err").textContent = m; $("#err").hidden = false; };
 
 function renderHits(hits, meta) {
   $("#cmp").hidden = true; $("#res").hidden = false; $("#res-meta").textContent = meta;
-  if (!hits.length) {
-    $("#hits").innerHTML = `<p class="note">No matches. For bm25 this means no query
-      term appears anywhere in the corpus — a genuine “I don't know” signal, which
-      dense retrieval can never give you.</p>`;
-    return;
-  }
+  // Cosine scores and cross-encoder logits are on completely different scales,
+  // so the bar is always relative to THIS result set, never absolute.
   const lo = Math.min(...hits.map(h => h.score)), hi = Math.max(...hits.map(h => h.score));
   const span = (hi - lo) || 1;
   $("#hits").innerHTML = hits.map(h => {
@@ -328,32 +298,27 @@ function renderHits(hits, meta) {
 }
 
 async function doSearch() {
-  const q = $("#q").value.trim(); if (!q) return;
+  const q = $("#q").value.trim(); if (!q || !ready) return;
   $("#err").hidden = true; $("#btn-search").disabled = true;
   try {
     const k = +$("#k").value, doRR = $("#rr").checked;
     setStatus("searching…", true);
-    const hits = await search(q, mode, k, doRR);
-    renderHits(hits, `${mode}${doRR ? " + rerank" : ""} · top ${k}`);
+    renderHits(await search(q, k, doRR), `dense${doRR ? " + rerank" : ""} · top ${k}`);
     readyStatus();
   } catch (e) { showErr(String(e)); readyStatus(); }
   finally { $("#btn-search").disabled = false; }
 }
 
 async function doCompare() {
-  const q = $("#q").value.trim(); if (!q) return;
+  const q = $("#q").value.trim(); if (!q || !ready) return;
   $("#err").hidden = true; $("#res").hidden = true; $("#cmp").hidden = false;
   $("#btn-cmp").disabled = true;
-  $("#cmp-meta").innerHTML = '<span class="spin"></span> running every strategy…';
+  $("#cmp-meta").innerHTML = '<span class="spin"></span> running both…';
   try {
     const k = +$("#k").value;
-    const strategies = denseReady
-      ? [["bm25","bm25",false],["dense","dense",false],["hybrid","hybrid",false],
-         ["dense+rr","dense",true],["hybrid+rr","hybrid",true]]
-      : [["bm25","bm25",false]];
+    const configurations = [["dense", false], ["dense + rerank", true]];
     const results = [];
-    for (const [label, m, rr] of strategies)
-      results.push([label, await search(q, m, k, rr)]);
+    for (const [label, rr] of configurations) results.push([label, await search(q, k, rr)]);
 
     const counts = {};
     results.forEach(([, hs]) => hs.forEach(h => counts[h.i] = (counts[h.i] || 0) + 1));
@@ -368,17 +333,13 @@ async function doCompare() {
 }
 
 function readyStatus() {
-  setStatus(`${BUNDLE.count} passages · 7 docs · ${denseReady ? "semantic ready" : "keyword only"}`, false);
+  setStatus(`${BUNDLE.count} passages · 7 docs · semantic ready`, false);
 }
 
-function enableDense() {
-  denseReady = true;
-  [...$("#seg").children].forEach(b => b.disabled = false);
-  $("#rr").disabled = false;
-  // The default ships in the data bundle (from config.DEFAULT_RETRIEVER), so
-  // the browser demo can't disagree with the Python about which strategy won.
-  mode = BUNDLE.default_retriever || "dense";
-  [...$("#seg").children].forEach(b => b.classList.toggle("on", b.dataset.m === mode));
+function enableUI() {
+  ready = true;
+  for (const id of ["#q", "#btn-search", "#rr", "#btn-cmp"]) $(id).disabled = false;
+  [...$("#chips").children].forEach(b => b.disabled = false);
   $("#model-banner").hidden = true;
   readyStatus();
 }
@@ -387,51 +348,37 @@ function enableDense() {
 (async function init() {
   EXAMPLES.forEach(t => {
     const b = document.createElement("button");
-    b.className = "chip"; b.textContent = t;
+    b.className = "chip"; b.textContent = t; b.disabled = true;
     b.onclick = () => { $("#q").value = t; doSearch(); };
     $("#chips").append(b);
   });
-  $("#seg").onclick = e => {
-    const b = e.target.closest("button[data-m]"); if (!b || b.disabled) return;
-    mode = b.dataset.m;
-    [...$("#seg").children].forEach(x => x.classList.toggle("on", x === b));
-    if (!$("#res").hidden) doSearch();
-  };
   $("#k").oninput = e => $("#kv").textContent = e.target.value;
   $("#btn-search").onclick = doSearch;
   $("#btn-cmp").onclick = doCompare;
+  $("#rr").onchange = () => { if (!$("#res").hidden) doSearch(); };
   $("#q").onkeydown = e => { if (e.key === "Enter") doSearch(); };
 
   try {
     BUNDLE = await (await fetch("data/index.json")).json();
     DIM = BUNDLE.dimension;
     // Rebuild the exact Float32Array Python wrote, from base64.
-    const bin = atob(BUNDLE.vectors_b64);
-    const buf = new ArrayBuffer(bin.length);
-    const bytes = new Uint8Array(buf);
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    VECS = new Float32Array(buf);
-    BM = buildBM25(BUNDLE.chunks, BUNDLE.bm25.k1, BUNDLE.bm25.b);
-
-    // Keyword search works immediately -- no model needed.
-    mode = "bm25";
-    [...$("#seg").children].forEach(b => b.classList.toggle("on", b.dataset.m === "bm25"));
-    readyStatus();
+    VECS = decodeVectors(BUNDLE.vectors_b64);
+    setStatus("downloading model…", true);
   } catch (e) {
     showErr("Could not load the index bundle: " + e);
     setStatus("failed to load", false);
     return;
   }
 
-  // Then upgrade to semantic search in the background.
   try {
     await loadEmbedder();
-    enableDense();
+    enableUI();
   } catch (e) {
     $("#model-banner").innerHTML =
-      "<b>Semantic search unavailable.</b> The embedding model could not load in " +
-      "this browser, so only keyword (BM25) search is running. Everything else " +
-      "still works. <span style='opacity:.7'>" + esc(String(e)) + "</span>";
+      "<b>The embedding model could not load in this browser.</b> Retrieval here " +
+      "is semantic, so there is no keyword fallback — the demo needs the model. " +
+      "<span style='opacity:.7'>" + esc(String(e)) + "</span>";
+    setStatus("model unavailable", false);
   }
 })();
 </script>

@@ -54,23 +54,21 @@ ENGINE: SearchEngine | None = None
 
 
 def build_engine() -> SearchEngine:
+    """Load the index and an embedder matching whatever built it.
+
+    Retrieval is semantic, so there is no degraded mode: if the embedder can't
+    load, the server can't serve, and it should say so rather than start up and
+    fail on the first query.
+    """
+    from hr_rag.embeddings import get_embedder
+
     chunks, vectors, meta = load_index()
-
-    embedder = None
-    if vectors is not None:
-        try:
-            from hr_rag.embeddings import get_embedder
-
-            kind = (
-                "hashing"
-                if meta.get("embedding_model") == "HashingEmbedder"
-                else "sentence-transformers"
-            )
-            embedder = get_embedder(kind)
-        except ImportError as exc:
-            print(f"! {exc}", file=sys.stderr)
-
-    return SearchEngine(chunks, vectors, embedder)
+    kind = (
+        "hashing"
+        if meta.get("embedding_model") == "HashingEmbedder"
+        else "sentence-transformers"
+    )
+    return SearchEngine(chunks, vectors, get_embedder(kind))
 
 
 def hit_to_dict(hit: Hit) -> dict:
@@ -115,7 +113,6 @@ class Handler(BaseHTTPRequestHandler):
                 {
                     "chunks": len(ENGINE.chunks),
                     "docs": len({c.doc for c in ENGINE.chunks}),
-                    "dense_available": ENGINE.dense_available,
                     "top_k": config.TOP_K,
                     "rerank_candidates": config.RERANK_CANDIDATES,
                     "model": config.ANTHROPIC_MODEL,
@@ -140,7 +137,7 @@ class Handler(BaseHTTPRequestHandler):
             # Bad request body is the caller's fault, not ours -> 4xx not 5xx.
             self._send_json({"error": "malformed JSON in request body"}, code=400)
         except ValueError as exc:
-            # e.g. an unknown retrieval mode from SearchEngine.search().
+            # e.g. a non-integer top_k in the request body.
             self._send_json({"error": str(exc)}, code=400)
         except Exception as exc:  # noqa: BLE001 - surface errors to the browser
             self._send_json({"error": f"{type(exc).__name__}: {exc}"}, code=500)
@@ -152,15 +149,11 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"error": "empty question"}, code=400)
             return
 
-        mode = body.get("retriever", config.DEFAULT_RETRIEVER)
         rerank = bool(body.get("rerank"))
         top_k = int(body.get("k", config.TOP_K))
 
-        if mode in ("dense", "hybrid") and not ENGINE.dense_available:
-            mode = "bm25"
-
-        hits = ENGINE.search(question, mode=mode, top_k=top_k, rerank=rerank)
-        self._send_json({"mode": mode, "rerank": rerank, "hits": [hit_to_dict(h) for h in hits]})
+        hits = ENGINE.search(question, top_k=top_k, rerank=rerank)
+        self._send_json({"rerank": rerank, "hits": [hit_to_dict(h) for h in hits]})
 
     def _handle_compare(self) -> None:
         """Run every available strategy on one question, side by side.
@@ -175,18 +168,11 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         top_k = int(body.get("k", config.TOP_K))
-        strategies = [("bm25", "bm25", False)]
-        if ENGINE.dense_available:
-            strategies += [
-                ("dense", "dense", False),
-                ("hybrid", "hybrid", False),
-                ("dense+rr", "dense", True),
-                ("hybrid+rr", "hybrid", True),
-            ]
+        configurations = [("dense", False), ("dense+rerank", True)]
 
         results = []
-        for label, mode, rerank in strategies:
-            hits = ENGINE.search(question, mode=mode, top_k=top_k, rerank=rerank)
+        for label, rerank in configurations:
+            hits = ENGINE.search(question, top_k=top_k, rerank=rerank)
             results.append({"label": label, "hits": [hit_to_dict(h) for h in hits]})
         self._send_json({"results": results})
 
@@ -215,13 +201,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"error": "empty question"}, code=400)
             return
 
-        mode = body.get("retriever", config.DEFAULT_RETRIEVER)
         rerank = bool(body.get("rerank"))
         top_k = int(body.get("k", config.TOP_K))
-        if mode in ("dense", "hybrid") and not ENGINE.dense_available:
-            mode = "bm25"
 
-        hits = ENGINE.search(question, mode=mode, top_k=top_k, rerank=rerank)
+        hits = ENGINE.search(question, top_k=top_k, rerank=rerank)
 
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
@@ -230,7 +213,7 @@ class Handler(BaseHTTPRequestHandler):
 
         # First line is JSON metadata (the sources), then the answer text.
         # Keeps the protocol trivial -- no SSE framing needed.
-        meta = json.dumps({"mode": mode, "hits": [hit_to_dict(h) for h in hits]})
+        meta = json.dumps({"rerank": rerank, "hits": [hit_to_dict(h) for h in hits]})
         self.wfile.write((meta + "\n").encode())
         self.wfile.flush()
 
@@ -257,7 +240,7 @@ def main() -> int:
         print(f"! {exc}", file=sys.stderr)
         return 1
 
-    print(f"  {len(ENGINE.chunks)} passages, dense={'yes' if ENGINE.dense_available else 'no'}")
+    print(f"  {len(ENGINE.chunks)} passages indexed")
     url = f"http://{HOST}:{PORT}"
     print(f"\n  UI running at {url}\n  Ctrl+C to stop\n")
 

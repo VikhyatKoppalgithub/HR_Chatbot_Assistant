@@ -5,7 +5,7 @@ Commands:
     python cli.py ingest              build the index
     python cli.py search "question"   see WHAT was retrieved (no API key needed)
     python cli.py ask "question"      full RAG answer from Claude
-    python cli.py eval                score the retrievers against each other
+    python cli.py eval                score retrieval against known answers
     python cli.py chunks              inspect how documents were split
 
 Start with `search` and `eval`. Neither costs anything, and together they teach
@@ -18,52 +18,28 @@ import argparse
 import sys
 
 from hr_rag import config
+from hr_rag.chunking import load_corpus
 from hr_rag.evaluate import evaluate, format_table, load_questions, per_question_report
 from hr_rag.index import SearchEngine, build_index, load_index
-from hr_rag.chunking import load_corpus
 
 
-def _make_embedder(kind: str):
-    """Build an embedder, degrading gracefully if the dependency is missing."""
-    if kind == "none":
-        return None
-    try:
-        from hr_rag.embeddings import get_embedder
+def _make_embedder(kind: str = "sentence-transformers"):
+    """Build an embedder, with a clear message if the dependency is missing."""
+    from hr_rag.embeddings import get_embedder
 
-        return get_embedder(kind)
-    except ImportError as exc:
-        print(f"! {exc}\n", file=sys.stderr)
-        return None
+    return get_embedder(kind)
 
 
-def _load_engine_for_query(requested_mode: str) -> tuple[SearchEngine, str]:
-    """Load the index and an embedder matching whatever built it.
+def _load_engine() -> SearchEngine:
+    """Load the index from disk and return a ready SearchEngine.
 
-    Returns the engine plus the mode actually usable -- which may be downgraded
-    to bm25 if the index has no vectors. We tell the user when that happens
-    rather than silently pretending hybrid search is running.
+    Retrieval is semantic, so an index without vectors is unusable -- both
+    `load_index` and this function fail loudly rather than degrading into
+    something that silently returns worse results.
     """
     chunks, vectors, meta = load_index()
-
-    embedder = None
-    if vectors is not None:
-        kind = "hashing" if meta.get("embedding_model") == "HashingEmbedder" else "sentence-transformers"
-        embedder = _make_embedder(kind)
-
-    engine = SearchEngine(chunks, vectors, embedder)
-
-    mode = requested_mode
-    if requested_mode in ("dense", "hybrid") and not engine.dense_available:
-        print(
-            f"! No embeddings in the index -- falling back to bm25 instead of {requested_mode}.\n"
-            "  To enable semantic search:\n"
-            "    pip install sentence-transformers\n"
-            "    python cli.py ingest\n",
-            file=sys.stderr,
-        )
-        mode = "bm25"
-
-    return engine, mode
+    kind = "hashing" if meta.get("embedding_model") == "HashingEmbedder" else "sentence-transformers"
+    return SearchEngine(chunks, vectors, _make_embedder(kind))
 
 
 # --------------------------------------------------------------------------
@@ -73,12 +49,9 @@ def _load_engine_for_query(requested_mode: str) -> tuple[SearchEngine, str]:
 
 def cmd_ingest(args: argparse.Namespace) -> int:
     print(f"Building index from {config.HANDBOOK_DIR} ...")
-    embedder = _make_embedder(args.embedder)
-    if embedder is None and args.embedder != "none":
-        print("  continuing with a keyword-only index\n")
-    build_index(embedder=embedder)
+    build_index(embedder=_make_embedder(args.embedder))
     print(f"\nIndex written to {config.INDEX_DIR}")
-    print("Try:  python cli.py search \"how much can I spend on a desk chair?\"")
+    print('Try:  python cli.py search "how much can I spend on a desk chair?"')
     return 0
 
 
@@ -93,17 +66,12 @@ def cmd_search(args: argparse.Namespace) -> int:
         print("! Empty question. Give me something to search for.", file=sys.stderr)
         return 1
 
-    engine, mode = _load_engine_for_query(args.retriever)
-    hits = engine.search(args.question, mode=mode, top_k=args.k, rerank=args.rerank)
+    engine = _load_engine()
+    hits = engine.search(args.question, top_k=args.k, rerank=args.rerank)
 
-    label = f"{mode} + cross-encoder rerank" if args.rerank else mode
+    label = "dense + cross-encoder rerank" if args.rerank else "dense"
     print(f"\nQuery:     {args.question}")
-    print(f"Retriever: {label}   (top {args.k})\n")
-
-    if not hits:
-        print("  No matches. For BM25 this means no query term appears anywhere")
-        print("  in the corpus -- a genuine 'I don't know' signal.")
-        return 0
+    print(f"Retrieval: {label}   (top {args.k})\n")
 
     for i, hit in enumerate(hits, start=1):
         preview = " ".join(hit.chunk.text.split())[:180]
@@ -120,8 +88,8 @@ def cmd_ask(args: argparse.Namespace) -> int:
 
     from hr_rag.answer import stream_answer
 
-    engine, mode = _load_engine_for_query(args.retriever)
-    hits = engine.search(args.question, mode=mode, top_k=args.k, rerank=args.rerank)
+    engine = _load_engine()
+    hits = engine.search(args.question, top_k=args.k, rerank=args.rerank)
 
     # flush so this lands before any error written to stderr, which is unbuffered
     print(f"\nQ: {args.question}\n", flush=True)
@@ -147,49 +115,38 @@ def cmd_ask(args: argparse.Namespace) -> int:
 
 
 def cmd_eval(args: argparse.Namespace) -> int:
-    engine, _ = _load_engine_for_query("hybrid")
+    engine = _load_engine()
     questions = load_questions()
 
-    # (label, mode, rerank) -- the strategies to compare.
-    strategies: list[tuple[str, str, bool]] = [("bm25", "bm25", False)]
-    if engine.dense_available:
-        strategies += [("dense", "dense", False), ("hybrid", "hybrid", False)]
-        if not args.no_rerank:
-            # Two-stage variants. Same first stage, plus a cross-encoder pass.
-            strategies += [
-                ("dense+rr", "dense", True),
-                ("hybrid+rr", "hybrid", True),
-            ]
+    # (label, rerank)
+    configurations: list[tuple[str, bool]] = [("dense", False)]
+    if not args.no_rerank:
+        configurations.append(("dense+rerank", True))
 
     answerable = [q for q in questions if not q.unanswerable]
     unanswerable = [q for q in questions if q.unanswerable]
 
-    print(f"\nEvaluating {len(answerable)} answerable questions "
-          f"({len(unanswerable)} unanswerable held out), top_k={args.k}")
-    if any(rerank for _, _, rerank in strategies):
-        print(f"'+rr' = reranked: {config.RERANK_CANDIDATES} candidates -> "
+    print(f"\nEvaluating {len(answerable)} answerable questions, top_k={args.k}")
+    print(f"({len(unanswerable)} unanswerable questions are not scored -- dense "
+          f"retrieval always\nreturns its nearest vectors, so there is nothing "
+          f"for a retrieval metric to measure.)")
+    if not args.no_rerank:
+        print(f"\n'dense+rerank' = {config.RERANK_CANDIDATES} candidates -> "
               f"cross-encoder -> top {args.k}")
     print()
 
     results = [
-        evaluate(engine, questions, mode=mode, top_k=args.k, rerank=rerank, label=label)
-        for label, mode, rerank in strategies
+        evaluate(engine, questions, top_k=args.k, rerank=rerank, label=label)
+        for label, rerank in configurations
     ]
     print(format_table(results, args.k))
 
-    if not engine.dense_available:
-        print(
-            "\n! Only BM25 was scored -- the index has no embeddings.\n"
-            "  The interesting comparison needs:\n"
-            "    pip install sentence-transformers && python cli.py ingest"
-        )
-
     print("\nWhere retrieval failed:")
-    print(per_question_report(engine, questions, strategies, args.k))
+    print(per_question_report(engine, questions, configurations, args.k))
     print(
-        "\nRead the failures, not just the averages. A question every strategy\n"
-        "misses usually means the handbook words it differently than a real\n"
-        "employee would -- which is a corpus problem, not a retriever problem."
+        "\nRead the failures, not just the averages. A question every\n"
+        "configuration misses usually means the handbook words it differently\n"
+        "than a real employee would -- a corpus problem, not a retriever problem."
     )
     return 0
 
@@ -222,8 +179,8 @@ def main() -> int:
     p_ingest.add_argument(
         "--embedder",
         default="sentence-transformers",
-        choices=["sentence-transformers", "hashing", "none"],
-        help="'none' builds a keyword-only index; 'hashing' is a non-semantic test stub",
+        choices=["sentence-transformers", "hashing"],
+        help="'hashing' is a non-semantic stub for tests and offline demos",
     )
     p_ingest.set_defaults(func=cmd_ingest)
 
@@ -233,13 +190,6 @@ def main() -> int:
     ]:
         p = sub.add_parser(name, help=help_text)
         p.add_argument("question")
-        p.add_argument(
-            "--retriever",
-            default=config.DEFAULT_RETRIEVER,
-            choices=["bm25", "dense", "hybrid"],
-            help=f"retrieval strategy (default: {config.DEFAULT_RETRIEVER}, "
-            "chosen by measurement -- see `cli.py eval`)",
-        )
         p.add_argument("-k", type=int, default=config.TOP_K, help="passages to retrieve")
         p.add_argument(
             "--rerank",
@@ -249,12 +199,12 @@ def main() -> int:
         )
         p.set_defaults(func=func)
 
-    p_eval = sub.add_parser("eval", help="score retrieval strategies against each other")
+    p_eval = sub.add_parser("eval", help="score retrieval against known answers")
     p_eval.add_argument("-k", type=int, default=config.TOP_K)
     p_eval.add_argument(
         "--no-rerank",
         action="store_true",
-        help="skip the reranked variants (faster; avoids the cross-encoder download)",
+        help="skip the reranked row (faster; avoids the cross-encoder download)",
     )
     p_eval.set_defaults(func=cmd_eval)
 
@@ -266,6 +216,9 @@ def main() -> int:
     try:
         return args.func(args)
     except FileNotFoundError as exc:
+        print(f"! {exc}", file=sys.stderr)
+        return 1
+    except ImportError as exc:
         print(f"! {exc}", file=sys.stderr)
         return 1
 

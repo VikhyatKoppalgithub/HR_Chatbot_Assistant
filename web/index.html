@@ -77,11 +77,6 @@
   .controls { display: flex; gap: 20px; flex-wrap: wrap; align-items: center; margin-top: 14px;
               padding-top: 14px; border-top: 1px solid var(--line); }
   .ctl { display: flex; align-items: center; gap: 8px; font-size: .8rem; color: var(--ink-dim); }
-  .seg { display: flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
-  .seg button { border: 0; border-radius: 0; padding: 6px 12px; font-size: .78rem;
-                font-family: var(--mono); background: transparent; }
-  .seg button + button { border-left: 1px solid var(--line); }
-  .seg button.on { background: var(--accent); color: #1a1206; font-weight: 600; }
   input[type=range] { accent-color: var(--accent); width: 90px; }
   input[type=checkbox] { accent-color: var(--accent); width: 15px; height: 15px; }
 
@@ -159,57 +154,10 @@
     <div class="chips" id="chips"></div>
 
     <div class="controls">
-      <div class="ctl">
-        <span>strategy</span>
-        <div class="seg" id="seg">
-          <button data-m="bm25">bm25</button>
-          <button data-m="dense">dense</button>
-          <button data-m="hybrid" class="on">hybrid</button>
-        </div>
       </div>
-      <label class="ctl"><input type="checkbox" id="rr"> rerank</label>
-      <label class="ctl">top-k <input type="range" id="k" min="1" max="10" value="5">
-        <b id="kv" style="font-family:var(--mono);color:var(--accent)">5</b></label>
-      <button id="btn-cmp" style="margin-left:auto">Compare all strategies</button>
-    </div>
-  </div>
-
-  <p id="demo-note" class="note" hidden style="margin-top:14px;border-left:3px solid var(--accent);padding-left:12px">
-    <b>Public demo — retrieval only.</b> Answer generation is disabled here because
-    this deployment has no authentication and calling the Claude API costs money.
-    Everything that makes this project interesting still works: switch retrieval
-    strategies, toggle reranking, and compare all five side by side.
-    <a href="https://github.com/VikhyatKoppalgithub/HR_Chatbot_Assistant" target="_blank"
-       rel="noopener" style="color:var(--accent)">Clone the repo</a>
-    and add your own API key to enable answers.
-  </p>
-
-  <div id="err" class="err" hidden></div>
-
-  <div class="answer" id="answer" hidden>
-    <h2>Answer</h2>
-    <div class="answer-text" id="answer-text"></div>
-  </div>
-
-  <div id="cmp" hidden>
-    <div class="sec-title"><h2>Strategy comparison</h2>
-      <span class="meta" id="cmp-meta"></span></div>
-    <div class="cols" id="cols"></div>
-    <p class="note">Bold = retrieved by this strategy only. Disagreement between
-      columns is where retrieval quality actually lives.</p>
-  </div>
-
-  <div id="res" hidden>
-    <div class="sec-title"><h2>Retrieved passages</h2>
-      <span class="meta" id="res-meta"></span></div>
-    <div id="hits"></div>
-  </div>
-
-</div>
 
 <script>
 const $ = s => document.querySelector(s);
-let mode = "hybrid", denseOK = true;
 
 const EXAMPLES = [
   "How much can I spend on a desk chair?",
@@ -228,12 +176,6 @@ EXAMPLES.forEach(t => {
   $("#chips").append(b);
 });
 
-$("#seg").onclick = e => {
-  const b = e.target.closest("button[data-m]"); if (!b) return;
-  mode = b.dataset.m;
-  [...$("#seg").children].forEach(x => x.classList.toggle("on", x === b));
-  if ($("#res").hidden === false || $("#cmp").hidden === false) search();
-};
 $("#k").oninput = e => $("#kv").textContent = e.target.value;
 $("#rr").onchange = () => { if (!$("#res").hidden) search(); };
 $("#btn-search").onclick = search;
@@ -242,19 +184,13 @@ $("#btn-cmp").onclick = compare;
 $("#q").onkeydown = e => { if (e.key === "Enter") search(); };
 
 fetch("/api/status").then(r => r.json()).then(s => {
-  denseOK = s.dense_available;
   $("#status").textContent =
-    `${s.chunks} passages · ${s.docs} docs · dense ${denseOK ? "on" : "off"} · rerank pool ${s.rerank_candidates}`;
+    `${s.chunks} passages · ${s.docs} docs · semantic · rerank pool ${s.rerank_candidates}`;
 
   // Public demo: generation is disabled server-side, so don't offer the button.
   if (s.demo_mode) {
     $("#btn-ask").remove();
     $("#demo-note").hidden = false;
-  }
-  if (!denseOK) {
-    mode = "bm25";
-    [...$("#seg").children].forEach(x => x.classList.toggle("on", x.dataset.m === "bm25"));
-    showErr("No embeddings in the index — only bm25 is available. Run: python3 cli.py ingest");
   }
 });
 
@@ -262,7 +198,7 @@ fetch("/api/status").then(r => r.json()).then(s => {
 function showErr(m) { $("#err").textContent = m; $("#err").hidden = false; }
 function clearErr() { $("#err").hidden = true; }
 function params() {
-  return { question: $("#q").value.trim(), retriever: mode,
+  return { question: $("#q").value.trim(),
            rerank: $("#rr").checked, k: +$("#k").value };
 }
 function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
@@ -290,8 +226,7 @@ function renderHits(hits, meta) {
       <div class="bar"><i style="width:${8 + 92 * (h.score - lo) / span}%"></i></div>
       <div class="hit-text">${md(h.text)}</div>
       <div class="hit-id">${esc(h.id)}</div>
-    </div>`).join("") || `<p class="note">No matches. For bm25 this means no
-      query term appears anywhere in the corpus — a real "I don't know" signal.</p>`;
+    </div>`).join("") || `<p class="note">No results.</p>`;
 }
 
 // ---- actions --------------------------------------------------------
@@ -303,7 +238,7 @@ async function search() {
     const r = await fetch("/api/search", { method: "POST", body: JSON.stringify(p) });
     const d = await r.json();
     if (d.error) return showErr(d.error);
-    renderHits(d.hits, `${d.mode}${d.rerank ? " + rerank" : ""} · top ${p.k}`);
+    renderHits(d.hits, `dense${d.rerank ? " + rerank" : ""} · top ${p.k}`);
   } catch (e) { showErr(String(e)); }
   finally { $("#btn-search").disabled = false; }
 }
@@ -313,7 +248,7 @@ async function compare() {
   clearErr(); $("#answer").hidden = true; $("#res").hidden = true;
   $("#btn-cmp").disabled = true;
   $("#cmp").hidden = false;
-  $("#cmp-meta").innerHTML = '<span class="spin"></span> running every strategy…';
+  $("#cmp-meta").innerHTML = '<span class="spin"></span> running both…';
   try {
     const r = await fetch("/api/compare", { method: "POST", body: JSON.stringify(p) });
     const d = await r.json();
@@ -351,7 +286,7 @@ async function ask() {
         const nl = buf.indexOf("\n");
         if (nl === -1) continue;
         const meta = JSON.parse(buf.slice(0, nl));
-        renderHits(meta.hits, `${meta.mode}${p.rerank ? " + rerank" : ""} · top ${p.k}`);
+        renderHits(meta.hits, `dense${p.rerank ? " + rerank" : ""} · top ${p.k}`);
         buf = buf.slice(nl + 1); metaDone = true;
       }
       answer = buf;
