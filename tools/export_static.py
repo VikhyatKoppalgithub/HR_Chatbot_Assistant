@@ -67,9 +67,11 @@ def main() -> int:
         "dimension": int(vectors.shape[1]),
         "count": int(vectors.shape[0]),
         # BM25 constants travel with the data so the JS port cannot silently
-        # drift from the Python implementation.
+        # drift from the Python implementation. Same for the default strategy:
+        # change it once in config.py and the browser demo follows.
         "bm25": {"k1": config.BM25_K1, "b": config.BM25_B},
         "rrf_k": config.RRF_K,
+        "default_retriever": config.DEFAULT_RETRIEVER,
         "vectors_b64": base64.b64encode(raw).decode("ascii"),
         "chunks": [
             {

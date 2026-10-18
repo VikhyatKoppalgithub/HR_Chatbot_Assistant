@@ -134,8 +134,8 @@
         <span>strategy</span>
         <div class="seg" id="seg">
           <button data-m="bm25">bm25</button>
-          <button data-m="dense" disabled>dense</button>
-          <button data-m="hybrid" class="on" disabled>hybrid</button>
+          <button data-m="dense" class="on" disabled>dense</button>
+          <button data-m="hybrid" disabled>hybrid</button>
         </div>
       </div>
       <label class="ctl"><input type="checkbox" id="rr" disabled> rerank</label>
@@ -375,8 +375,10 @@ function enableDense() {
   denseReady = true;
   [...$("#seg").children].forEach(b => b.disabled = false);
   $("#rr").disabled = false;
-  mode = "hybrid";
-  [...$("#seg").children].forEach(b => b.classList.toggle("on", b.dataset.m === "hybrid"));
+  // The default ships in the data bundle (from config.DEFAULT_RETRIEVER), so
+  // the browser demo can't disagree with the Python about which strategy won.
+  mode = BUNDLE.default_retriever || "dense";
+  [...$("#seg").children].forEach(b => b.classList.toggle("on", b.dataset.m === mode));
   $("#model-banner").hidden = true;
   readyStatus();
 }

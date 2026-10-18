@@ -126,11 +126,14 @@ class SearchEngine:
     def search(
         self,
         query: str,
-        mode: str = "hybrid",
+        mode: str | None = None,
         top_k: int | None = None,
         rerank: bool = False,
     ) -> list[Hit]:
         top_k = top_k or config.TOP_K
+        # Default lives in config, not in this signature, so every interface
+        # (CLI, server, Streamlit, eval) picks up a change in one place.
+        mode = mode or config.DEFAULT_RETRIEVER
 
         if rerank:
             # Two-stage retrieval: fetch a wide candidate pool cheaply, then

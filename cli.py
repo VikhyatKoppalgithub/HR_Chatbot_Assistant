@@ -234,7 +234,11 @@ def main() -> int:
         p = sub.add_parser(name, help=help_text)
         p.add_argument("question")
         p.add_argument(
-            "--retriever", default="hybrid", choices=["bm25", "dense", "hybrid"]
+            "--retriever",
+            default=config.DEFAULT_RETRIEVER,
+            choices=["bm25", "dense", "hybrid"],
+            help=f"retrieval strategy (default: {config.DEFAULT_RETRIEVER}, "
+            "chosen by measurement -- see `cli.py eval`)",
         )
         p.add_argument("-k", type=int, default=config.TOP_K, help="passages to retrieve")
         p.add_argument(

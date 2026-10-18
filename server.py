@@ -152,7 +152,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"error": "empty question"}, code=400)
             return
 
-        mode = body.get("retriever", "hybrid")
+        mode = body.get("retriever", config.DEFAULT_RETRIEVER)
         rerank = bool(body.get("rerank"))
         top_k = int(body.get("k", config.TOP_K))
 
@@ -215,7 +215,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"error": "empty question"}, code=400)
             return
 
-        mode = body.get("retriever", "hybrid")
+        mode = body.get("retriever", config.DEFAULT_RETRIEVER)
         rerank = bool(body.get("rerank"))
         top_k = int(body.get("k", config.TOP_K))
         if mode in ("dense", "hybrid") and not ENGINE.dense_available:

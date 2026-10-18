@@ -108,6 +108,13 @@ can I spend on a desk chair?"* it dragged "Pay Dates and Payslips" into the top
 embedding model, it is not. **Without an eval harness I would have shipped
 hybrid and told you it was better.**
 
+So the project's default is `dense` (`DEFAULT_RETRIEVER` in `config.py`) —
+chosen by measurement, against the conventional advice. BM25 and hybrid stay
+fully available via `--retriever`, because they are the evidence the default was
+measured rather than assumed. Re-run `python cli.py eval` after changing the
+corpus; on a larger or noisier one, hybrid may well win and this should change
+back.
+
 **4. Reranking fixed everything, including a question nothing else could
 answer.** `dense+rr` retrieves *perfectly* on this set — Hit@5 and Recall@5 of
 1.000. Most striking: *"Am I allowed to tell a colleague what I earn?"* was

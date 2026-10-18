@@ -145,7 +145,7 @@ export function rrf(rankings, topK, k) {
  * Node without loading a transformer, and so the browser controls when the
  * model is downloaded.
  */
-export async function search(state, query, { mode = "hybrid", topK = 5, rerank = null } = {}) {
+export async function search(state, query, { mode = "dense", topK = 5, rerank = null } = {}) {
   const { bm, vecs, dim, count, rrfK, embed } = state;
   // When reranking, retrieve a wider pool first: the reranker can only reorder
   // what it is handed, so the pool size is the ceiling on what it can fix.

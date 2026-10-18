@@ -61,9 +61,11 @@ EXAMPLES = [
     "Does Northwind offer pet insurance?",
 ]
 
+# Dense is listed first because it is the measured default -- see
+# config.DEFAULT_RETRIEVER for why hybrid, the conventional choice, lost.
 MODES = {
+    "dense": "Dense — semantic vector search (default)",
     "hybrid": "Hybrid (BM25 + dense, fused with RRF)",
-    "dense": "Dense — semantic vector search",
     "bm25": "BM25 — keyword search, written from scratch",
 }
 
@@ -81,11 +83,17 @@ engine = get_engine()
 
 with st.sidebar:
     st.subheader("Retrieval settings")
+    from hr_rag import config as _cfg
+
     mode = st.radio(
         "Strategy",
         list(MODES),
         format_func=lambda m: MODES[m],
-        index=0,
+        # Derive the selected index from config rather than hardcoding 0, so
+        # changing DEFAULT_RETRIEVER moves this too.
+        index=list(MODES).index(_cfg.DEFAULT_RETRIEVER)
+        if _cfg.DEFAULT_RETRIEVER in MODES
+        else 0,
     )
     rerank = st.toggle(
         "Cross-encoder rerank",
